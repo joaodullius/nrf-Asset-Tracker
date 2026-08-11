@@ -152,6 +152,7 @@ struct ntn_state_object {
 	bool has_valid_gnss;
 	uint64_t location_validity_end_time;
 	bool run_sgp4_after_gnss;
+	bool boot_trigger_done;
 	float sgp4_min_elevation_deg;
 	int32_t ntn_peak_offset_seconds;
 	int64_t  modem_cell_found_time;
@@ -1501,6 +1502,18 @@ static void state_running_entry(void *obj)
 	k_work_init(&gnss_location_work, gnss_location_work_handler);
 	k_work_init(&gnss_timeout_work, handle_gnss_timeout_work_fn);
 
+	/* Load the TLE before touching the modem. This only fills RAM, but the
+	 * modem setup below bails out on several errors, and any of those would
+	 * otherwise leave the module running with no prediction data at all.
+	 */
+	load_tle_from_kconfig(state);
+
+#ifndef CONFIG_SOFTSIM
+	if (!state->has_valid_tle && !state->has_valid_sib32) {
+		LOG_WRN("Provide SIB32 or TLE before running SGP4: att_ntn set_sib32 \"<SIBREQ: 32,...>\" or att_ntn set_tle \"<name>\" \"<line1>\" \"<line2>\"");
+	}
+#endif
+
 	err = nrf_modem_lib_init();
 	if (err) {
 		LOG_ERR("Failed to initialize the modem library, error: %d", err);
@@ -1632,14 +1645,6 @@ static void state_running_entry(void *obj)
 	} else {
 		LOG_INF("CELLULARPRFL already configured");
 	}
-
-	load_tle_from_kconfig(state);
-
-#ifndef CONFIG_SOFTSIM
-	if (!state->has_valid_tle && !state->has_valid_sib32) {
-		LOG_WRN("Provide SIB32 or TLE before running SGP4: att_ntn set_sib32 \"<SIBREQ: 32,...>\" or att_ntn set_tle \"<name>\" \"<line1>\" \"<line2>\"");
-	}
-#endif
 
 #ifdef CONFIG_SOFTSIM
 	/* Init nrfcloud coap */
@@ -2614,6 +2619,36 @@ static void state_idle_entry(void *obj)
 	state->rrc_is_connected = false;
 
 	LOG_DBG("%s", __func__);
+
+#if defined(CONFIG_APP_NTN_TRIGGER_ON_BOOT)
+	/* Nothing scheduled means this is either boot or a dead end after a
+	 * failed prediction. Arm the GNSS timer so the cycle restarts.
+	 */
+	if (k_timer_remaining_get(&state->gnss_timer) == 0 &&
+	    k_timer_remaining_get(&state->ntn_timer) == 0 &&
+	    k_timer_remaining_get(&state->sgp4_timer) == 0) {
+		uint32_t delay_s;
+
+		if (!state->boot_trigger_done) {
+			state->boot_trigger_done = true;
+			delay_s = CONFIG_APP_NTN_TRIGGER_ON_BOOT_DELAY_SECONDS;
+
+			LOG_INF("Boot: running GNSS + SGP4 in %u seconds", delay_s);
+		} else {
+			delay_s = CONFIG_APP_NTN_RETRY_INTERVAL_SECONDS;
+
+			LOG_WRN("No pass scheduled, retrying GNSS + SGP4 in %u seconds", delay_s);
+		}
+
+		/* state_sgp4_exit() clears this on every abort path; the SMF runs
+		 * that exit before this entry, so restoring it here is what makes
+		 * the retried fix chain into SGP4 again.
+		 */
+		state->run_sgp4_after_gnss = true;
+
+		k_timer_start(&state->gnss_timer, K_SECONDS(delay_s), K_NO_WAIT);
+	}
+#endif
 }
 
 

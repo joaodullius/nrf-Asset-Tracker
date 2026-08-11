@@ -114,6 +114,40 @@ config APP_NTN_THINGY_ROCKS_ENDPOINT
 	help
 	  Use world.thingy.rocks endpoint.
 
+config APP_NTN_TRIGGER_ON_BOOT
+	bool "Run GNSS + SGP4 automatically at boot"
+	default n
+	help
+	  Schedule a GNSS fix shortly after boot. Since run_sgp4_after_gnss
+	  defaults to true, the fix chains into SGP4, which predicts the next
+	  pass from the provisioned TLE/SIB32 and arms the pass timers.
+
+	  Also re-arms the GNSS timer whenever the module enters IDLE with no
+	  pass scheduled, so a failed attempt (GNSS timeout, no valid clock,
+	  no pass found) retries instead of leaving the device stuck.
+
+	  Without this, GNSS only runs from a timer armed by a previous
+	  successful prediction, or manually via `att_ntn gnss_trigger`.
+
+if APP_NTN_TRIGGER_ON_BOOT
+
+config APP_NTN_TRIGGER_ON_BOOT_DELAY_SECONDS
+	int "Delay before the boot GNSS fix"
+	range 0 3600
+	default 10
+	help
+	  Grace period after module init before the first GNSS fix starts.
+
+config APP_NTN_RETRY_INTERVAL_SECONDS
+	int "Retry interval when no pass is scheduled"
+	range 60 86400
+	default 900
+	help
+	  When the module enters IDLE and no pass is scheduled, retry the
+	  GNSS + SGP4 cycle after this many seconds.
+
+endif # APP_NTN_TRIGGER_ON_BOOT
+
 config APP_NTN_TIMER_NTN_VALUE_SECONDS
 	int "Default peak-time offset for NTN activation"
 	default 20
