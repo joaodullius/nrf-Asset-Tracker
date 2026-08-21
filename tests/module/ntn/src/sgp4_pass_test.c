@@ -18,7 +18,13 @@
  /* missing headers */
  struct tm *gmtime_r(const int64_t *timep, struct tm *result);
  char *strtok_r(char *str, const char *delim, char **saveptr);
- 
+
+ /* Widen the pass search window before pulling in the implementation, so
+  * test_nextpass_beyond_24h_window() can exercise a multi-day search. The
+  * other tests find their pass within the first day and are unaffected.
+  */
+ #define CONFIG_APP_SGP4_PREDICTION_WINDOW_DAYS 10
+
  #include "../../../app/src/modules/sgp4/sgp4_pass_predict.c"
  
  DEFINE_FFF_GLOBALS;
@@ -279,6 +285,36 @@
 	 free(sib32);
  }
  
+ void test_nextpass_beyond_24h_window(void)
+ {
+	 /* SATELIOT_2 (NORAD 60534), Celestrak, epoch 2026-08-20 18:03 UTC */
+	 char line1[] = "1 60534U 24149BU  26232.75222631  .00001957  00000+0  17701-3 0  9991";
+	 char line2[] = "2 60534  97.6787 306.5250 0001457 110.0835 250.0544 14.96558306109625";
+	 /* From Blumenau/SC at 2026-08-23 03:00:00 UTC the next pass above 71
+	  * degrees elevation only happens on 2026-09-01 13:23:30 UTC, ~9.4 days
+	  * ahead (cross-checked with python-sgp4). The closest earlier pass peaks
+	  * at 69.07 degrees, ~2 degrees below the threshold, so small model
+	  * differences cannot produce a false early match.
+	  */
+	 const int64_t start_time_ms = 1787454000000LL;
+	 const int64_t expected_pass_start_ms = 1788269010000LL;
+	 struct sat_data satellite;
+	 int err;
+
+	 err = sat_data_init_tle(&satellite, line1, line2);
+	 TEST_ASSERT_EQUAL(0, err);
+
+	 err = sat_data_calculate_next_pass(&satellite, 0, -26.9261, -49.0610, 15.0,
+		 start_time_ms, 71.0);
+	 TEST_ASSERT_EQUAL(0, err);
+	 TEST_ASSERT_TRUE(satellite.next_pass.start_time_ms >
+		 start_time_ms + (8LL * 86400 * 1000));
+	 TEST_ASSERT_TRUE(llabs(satellite.next_pass.start_time_ms -
+		 expected_pass_start_ms) <= 5 * 60 * 1000);
+	 TEST_ASSERT_TRUE(satellite.next_pass.max_elevation >= 71.0);
+	 debug_print_next_pass(&satellite);
+ }
+
  void test_nullinput(void)
  {
 	 int err;

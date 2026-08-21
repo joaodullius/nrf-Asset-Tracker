@@ -22,6 +22,18 @@
  #define XKMPER 6378.137  /* Earth radius in km */
  #define F (1.0/298.257223563) /* Flattening */
 
+ #define PASS_SEARCH_STEP_SECONDS 10
+ #define PASS_SEARCH_STEPS_PER_DAY (86400 / PASS_SEARCH_STEP_SECONDS)
+ /* Tests include this file without the application Kconfig; fall back to the
+  * original one day window there. Capped at 10 days by the Kconfig range so
+  * the millisecond offsets below stay within int range.
+  */
+ #ifdef CONFIG_APP_SGP4_PREDICTION_WINDOW_DAYS
+ #define PASS_SEARCH_WINDOW_DAYS CONFIG_APP_SGP4_PREDICTION_WINDOW_DAYS
+ #else
+ #define PASS_SEARCH_WINDOW_DAYS 1
+ #endif
+
  LOG_MODULE_REGISTER(sgp4_pass_predict, 4);
 
  /* Internal datetime structure */
@@ -511,13 +523,17 @@ int sat_data_calculate_next_pass(struct sat_data *sat_data, int sat_index, doubl
 	 jd_current_start = jd_start + jdfrac_start;
 	 minutes_offset_start = (jd_current_start - jd_epoch) * 1440.0;
 
-	 /* Check next 24 hours with 10 second granularity */
-	 for (int i = 0; i < 8640; i++) {
+	 /* Check the prediction window with 10 second granularity */
+	 for (int i = 0; i < PASS_SEARCH_WINDOW_DAYS * PASS_SEARCH_STEPS_PER_DAY; i++) {
+		 if (i > 0 && !in_pass && (i % PASS_SEARCH_STEPS_PER_DAY) == 0) {
+			 LOG_INF("Pass search: day %d/%d, no pass found yet",
+				 i / PASS_SEARCH_STEPS_PER_DAY, PASS_SEARCH_WINDOW_DAYS);
+		 }
 		 minutes_since_epoch = minutes_offset_start + (i*10.0)/60.0;
 		 if (!(sgp4(&sat_data->satrec[sat_index], minutes_since_epoch, r, v))) {
 			 continue;
 		 }
-		 current_jd = jd_current_start + (i / 8640.0);
+		 current_jd = jd_current_start + ((double)i / PASS_SEARCH_STEPS_PER_DAY);
 		 gmst = gstime(current_jd);
 		 calculate_look_angle(r, r_station_ecef, lat, lon, gmst, &elevation);
 		 if (elevation >= min_elevation_deg) {
@@ -546,13 +562,14 @@ int sat_data_calculate_next_pass(struct sat_data *sat_data, int sat_index, doubl
 	 }
 
 	 if (in_pass) {
-		 /* Pass continues beyond 24h? */
+		 /* Pass continues beyond the search window? */
 		 sat_data->next_pass.start_time_ms = pass_start;
-		 sat_data->next_pass.end_time_ms = start_time_ms + (1440 * 60 * 1000);
+		 sat_data->next_pass.end_time_ms =
+			 start_time_ms + (PASS_SEARCH_WINDOW_DAYS * 86400 * 1000);
 		 sat_data->next_pass.max_elevation = max_el;
 		 return 0;
 	 }
-	 LOG_ERR("No pass found");
+	 LOG_ERR("No pass found within %d day(s)", PASS_SEARCH_WINDOW_DAYS);
 	 return -1; /* No pass found */
  }
 
