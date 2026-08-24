@@ -248,6 +248,17 @@ config APP_NTN_DEFAULT_ALTITUDE_1000
 	  The value is multiplied by 1000 to handle decimal places.
 	  For example, 130.798 is represented as 130798.
 
+config APP_NTN_STATUS_LEDS
+	bool "Drive board LEDs from the NTN state machine"
+	select GPIO
+	help
+	  Show the NTN cycle on the DK LEDs (devicetree aliases led0..led3):
+	  led0 blinks while GNSS is searching and goes solid on fix; led1
+	  blinks during the pass window, blinks fast once registered/RRC
+	  connected and latches solid after the UDP payload was sent; led2
+	  is solid while a pass is scheduled and blinks slowly when the
+	  prediction found no pass; led3 goes solid on fatal error.
+
 config APP_NTN_USB_KEEPALIVE_ENABLE
 	bool "Enable USB keepalive"
 	help

@@ -10,3 +10,4 @@ zephyr_include_directories(${ZEPHYR_BASE}/../nrf/modules/memfault-firmware-sdk/i
 endif()
 target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ntn.c)
 target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ntn_shell.c)
+target_sources_ifdef(CONFIG_APP_NTN_STATUS_LEDS app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ntn_led.c)

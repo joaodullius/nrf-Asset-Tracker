@@ -30,6 +30,7 @@
 #include "cbor_helper.h"
 #include "app_common.h"
 #include "ntn.h"
+#include "ntn_led.h"
 #include "sgp4_pass_predict.h"
 #include <math.h>
 
@@ -1881,6 +1882,7 @@ static void state_running_entry(void *obj)
 	err = nrf_cloud_coap_init();
 	if (err) {
 		LOG_ERR("nrf_cloud_coap_init, error: %d", err);
+		ntn_led_fatal_error();
 		SEND_FATAL_ERROR();
 
 		return;
@@ -2040,6 +2042,8 @@ static void state_gnss_entry(void *obj)
 
 		return;
 	}
+
+	ntn_led_gnss_searching();
 }
 
 static enum smf_state_result state_gnss_run(void *obj)
@@ -2052,6 +2056,8 @@ static enum smf_state_result state_gnss_run(void *obj)
 		struct ntn_msg *msg = (struct ntn_msg *)state->msg_buf;
 
 		if (msg->type == LOCATION_SEARCH_DONE) {
+			ntn_led_gnss_fix();
+
 			/* Store GNSS data */
 			update_cached_pvt(state, &msg->pvt);
 
@@ -2062,6 +2068,8 @@ static enum smf_state_result state_gnss_run(void *obj)
 				smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
 			}
 		} else if (msg->type == GNSS_TIMEOUT){
+			ntn_led_gnss_timeout();
+
 			/* If state machine has valid gnss, then use last pvt */
 			/* Else fallback to hardcoded ones */
 			/* TODO: use Kconfig for hardcoeded values? */
@@ -2355,6 +2363,7 @@ static void state_sgp4_entry(void *obj)
 
 	err = init_sat_data_for_prediction(state, sat_data, &prediction_source);
 	if (err) {
+		ntn_led_no_pass();
 		smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
 		return;
 	}
@@ -2371,6 +2380,7 @@ static void state_sgp4_entry(void *obj)
 
 	if (sat_data->sat_count == 0) {
 		LOG_ERR("Prediction data does not contain any satellites");
+		ntn_led_no_pass();
 		smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
 		return;
 	}
@@ -2398,6 +2408,7 @@ static void state_sgp4_entry(void *obj)
 
 	if (best_sat_index < 0) {
 		LOG_ERR("Failed to get next satellite pass for any tracked satellite");
+		ntn_led_no_pass();
 		smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
 		return;
 	}
@@ -2459,6 +2470,9 @@ static void state_sgp4_entry(void *obj)
 	err = reschedule_next_pass(state, time_str);
 	if (err) {
 		LOG_ERR("Failed to reschedule timers, error: %d", err);
+		ntn_led_no_pass();
+	} else {
+		ntn_led_pass_scheduled();
 	}
 
 	smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
@@ -2493,6 +2507,8 @@ static void state_ntn_entry(void *obj)
 	state->modem_cell_found_time = 0;
 	state->modem_connectivity_time = 0;
 	state->is_registered = false;
+
+	ntn_led_pass_start();
 
 	k_sleep(K_SECONDS(1));
 
@@ -2575,6 +2591,8 @@ static enum smf_state_result state_ntn_run(void *obj)
 			state->rrc_is_connected = true;
 			state->modem_connectivity_time = k_uptime_get();
 
+			ntn_led_pass_progress();
+
 			if (state->pdn_resumed_time > 0) {
 				int32_t delta_ms;
 
@@ -2628,6 +2646,8 @@ static enum smf_state_result state_ntn_run(void *obj)
 			}
 
 			state->is_registered = true;
+
+			ntn_led_pass_progress();
 
 			LOG_INF("NTN network registered, extending timeout to %d s",
 				CONFIG_APP_NTN_REGISTERED_TIMEOUT_SECONDS);
@@ -2683,6 +2703,13 @@ static enum smf_state_result state_ntn_run(void *obj)
 				sock_disable_send_ack(state->sock_fd);
 			}
 
+			/* The network acknowledged the payload on air, which is what
+			 * the solid pass LED is meant to report. Latching it here
+			 * rather than on a successful send() keeps the indication
+			 * honest: send() only means the modem queued the packet.
+			 */
+			ntn_led_udp_ok();
+
 			smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
 
 			return SMF_EVENT_HANDLED;
@@ -2691,6 +2718,8 @@ static enum smf_state_result state_ntn_run(void *obj)
 			if (state->sock_fd >= 0) {
 				sock_disable_send_ack(state->sock_fd);
 			}
+
+			ntn_led_send_failed();
 
 			smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
 
@@ -2717,6 +2746,8 @@ static void state_ntn_exit(void *obj)
 #endif
 
 	LOG_DBG("%s", __func__);
+
+	ntn_led_pass_end();
 
 	/* Close socket if it was open */
 	if (state->sock_fd >= 0) {
@@ -2831,6 +2862,7 @@ static void ntn_module_thread(void)
 	task_wdt_id = task_wdt_add(wdt_timeout_ms, ntn_wdt_callback, (void *)k_current_get());
 	if (task_wdt_id < 0) {
 		LOG_ERR("Failed to add task to watchdog: %d", task_wdt_id);
+		ntn_led_fatal_error();
 		SEND_FATAL_ERROR();
 
 		return;
@@ -2843,6 +2875,7 @@ static void ntn_module_thread(void)
 		err = task_wdt_feed(task_wdt_id);
 		if (err) {
 			LOG_ERR("task_wdt_feed, error: %d", err);
+			ntn_led_fatal_error();
 			SEND_FATAL_ERROR();
 
 			return;
@@ -2854,6 +2887,7 @@ static void ntn_module_thread(void)
 			continue;
 		} else if (err) {
 			LOG_ERR("zbus_sub_wait_msg, error: %d", err);
+			ntn_led_fatal_error();
 			SEND_FATAL_ERROR();
 
 			return;
