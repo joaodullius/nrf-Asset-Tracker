@@ -13,6 +13,15 @@ config APP_SGP4
 
 # No "depends on APP_SGP4": NTN builds compile this module unconditionally
 # (see app/CMakeLists.txt) without setting APP_SGP4.
+config APP_SGP4_MIN_ELEVATION_DEG
+    int "Default minimum pass elevation in degrees"
+    default 50
+    range 0 90
+    help
+      Minimum satellite elevation above the horizon for a pass to be
+      considered usable by sat_data_calculate_next_pass(). Can still be
+      overridden at runtime via the att_ntn sgp4_trigger shell command.
+
 config APP_SGP4_PREDICTION_WINDOW_DAYS
     int "Pass prediction search window in days"
     default 1

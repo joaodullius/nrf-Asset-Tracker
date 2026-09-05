@@ -12,7 +12,12 @@
  #include <stdint.h>
  
  #define MAX_SATELLITES 4
+ /* Unit tests build without the app Kconfig tree, so keep a fallback. */
+ #ifdef CONFIG_APP_SGP4_MIN_ELEVATION_DEG
+ #define SGP4_DEFAULT_MIN_ELEVATION_DEG ((double)CONFIG_APP_SGP4_MIN_ELEVATION_DEG)
+ #else
  #define SGP4_DEFAULT_MIN_ELEVATION_DEG 50.0
+ #endif
  
  struct next_pass {
 	 int64_t start_time_ms;
