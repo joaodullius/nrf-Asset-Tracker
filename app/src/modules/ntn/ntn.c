@@ -1452,6 +1452,33 @@ static int sock_open_and_connect(struct ntn_state_object *state)
 		return -errno;
 	}
 
+	/* Bind to a fixed local port so that the source port is stable across
+	 * passes. The socket is closed when the pass ends, and mobile-terminated
+	 * data is stored and forwarded by the network until the next pass, so an
+	 * ephemeral source port would leave the downlink addressed to a port that
+	 * no longer exists. The modem answers those with ICMP port unreachable
+	 * over the satellite link and the data is lost.
+	 */
+	if (CONFIG_APP_NTN_LOCAL_PORT > 0) {
+		struct sockaddr_in local_addr = {
+			.sin_family = AF_INET,
+			.sin_port = htons(CONFIG_APP_NTN_LOCAL_PORT),
+			.sin_addr.s_addr = htonl(INADDR_ANY),
+		};
+
+		err = bind(state->sock_fd, (struct sockaddr *)&local_addr,
+			   sizeof(local_addr));
+		if (err < 0) {
+			LOG_ERR("Failed to bind socket to local port %d, error: %d",
+				CONFIG_APP_NTN_LOCAL_PORT, errno);
+			close(state->sock_fd);
+
+			state->sock_fd = -1;
+
+			return -errno;
+		}
+	}
+
 	/* Connect socket */
 	err = connect(state->sock_fd, (struct sockaddr *)&host_addr, sizeof(struct sockaddr_in));
 	if (err < 0) {

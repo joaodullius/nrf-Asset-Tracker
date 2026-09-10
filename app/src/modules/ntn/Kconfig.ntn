@@ -65,6 +65,29 @@ config APP_NTN_SERVER_PORT
 	help
 	  Port number of the NTN server to connect to.
 
+config APP_NTN_LOCAL_PORT
+	int "NTN local UDP port"
+	default APP_NTN_SERVER_PORT
+	range 0 65535
+	help
+	  Local UDP port to bind the NTN socket to before connecting.
+
+	  The socket is opened at the start of every NTN pass and closed when the
+	  pass ends. Without an explicit bind, the modem assigns a new ephemeral
+	  port each time, so the mobile-terminated data that the network stores
+	  and forwards to the previous pass port arrives at a port that no longer
+	  exists. The modem then answers with ICMP port unreachable over the
+	  satellite link and the application never sees the downlink.
+
+	  Defaults to APP_NTN_SERVER_PORT, which keeps both ends of the exchange
+	  on the same port number and stays clear of the ephemeral range the
+	  modem allocates from. The server replies to the source port of the
+	  datagram, so any fixed port works; matching the server port is a
+	  convention, not a requirement.
+
+	  Set to 0 to leave the socket unbound and keep the ephemeral port
+	  behaviour.
+
 config APP_NTN_LEO
 	bool "Enable LEO NTN"
 	help
