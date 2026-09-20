@@ -11,7 +11,10 @@
 extern "C" {
 #endif
 
-/* Status LEDs driven from the NTN state machine (DK aliases led0..led3):
+/* Status LEDs driven from the NTN state machine. Two backends implement this
+ * interface; the one built is picked by the led3 devicetree alias.
+ *
+ * ntn_led.c - four discrete LEDs, aliases led0..led3 (nRF9151 DK):
  *
  *   led0 - GNSS:      off at boot, blinks while searching, solid on fix.
  *   led1 - pass:      blinks during the pass window, fast blink once the
@@ -24,6 +27,20 @@ extern "C" {
  *                     prediction found no pass.
  *   led3 - error:     solid on fatal error, during the grace period before
  *                     the assert/reboot.
+ *
+ * ntn_led_rgb.c - one RGB LED, aliases led0/led1/led2 as the red/green/blue
+ * channels (Thingy:91 X). The same sub-states share the single LED and are
+ * collapsed by priority, highest first:
+ *
+ *   red solid         - fatal error.
+ *   green solid       - uplink UDP payload sent (latched until next cycle).
+ *   green fast blink  - registered / RRC connected.
+ *   green blink       - pass window.
+ *   blue blink        - GNSS searching.
+ *   cyan solid        - pass scheduled.
+ *   cyan slow blink   - prediction found no pass.
+ *   blue solid        - GNSS fix.
+ *   off               - idle, or GNSS timed out.
  */
 
 #if defined(CONFIG_APP_NTN_STATUS_LEDS)

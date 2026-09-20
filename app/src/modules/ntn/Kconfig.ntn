@@ -275,12 +275,43 @@ config APP_NTN_STATUS_LEDS
 	bool "Drive board LEDs from the NTN state machine"
 	select GPIO
 	help
-	  Show the NTN cycle on the DK LEDs (devicetree aliases led0..led3):
+	  Show the NTN cycle on the board LEDs (devicetree aliases led0..led3
+	  on a DK, led0..led2 as the RGB channels on a Thingy:91 X). See the
+	  backend choice below for the two mappings.
+
+if APP_NTN_STATUS_LEDS
+
+choice
+	prompt "Status LED backend"
+	default APP_NTN_STATUS_LEDS_DISCRETE if $(dt_alias_enabled,led3)
+	default APP_NTN_STATUS_LEDS_RGB
+	help
+	  Boards with four discrete LEDs get one LED per sub-state; boards
+	  with a single RGB LED get one colour per sub-state. The default
+	  follows the presence of the led3 devicetree alias.
+
+config APP_NTN_STATUS_LEDS_DISCRETE
+	bool "Four discrete LEDs (led0..led3)"
+	help
 	  led0 blinks while GNSS is searching and goes solid on fix; led1
 	  blinks during the pass window, blinks fast once registered/RRC
 	  connected and latches solid after the UDP payload was sent; led2
 	  is solid while a pass is scheduled and blinks slowly when the
 	  prediction found no pass; led3 goes solid on fatal error.
+
+config APP_NTN_STATUS_LEDS_RGB
+	bool "Single RGB LED (led0 red, led1 green, led2 blue)"
+	help
+	  The sub-states share one LED and are collapsed by priority: red
+	  solid on fatal error; green during the pass window (normal blink),
+	  registered/RRC (fast blink) and after the UDP payload was sent
+	  (solid, latched); blue blinking while GNSS is searching; cyan solid
+	  while a pass is scheduled and cyan slow-blinking when the prediction
+	  found no pass; blue solid on GNSS fix; off when idle.
+
+endchoice
+
+endif # APP_NTN_STATUS_LEDS
 
 config APP_NTN_USB_KEEPALIVE_ENABLE
 	bool "Enable USB keepalive"
