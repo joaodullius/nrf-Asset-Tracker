@@ -88,6 +88,24 @@ config APP_NTN_LOCAL_PORT
 	  Set to 0 to leave the socket unbound and keep the ephemeral port
 	  behaviour.
 
+config APP_NTN_UDP_RX_WAIT_TN_MS
+	int "UDP receive window after a TN report (ms)"
+	default 5000
+	help
+	  After sending a UDP report over TN, wait this long for datagrams from
+	  the server (for example its ACK) and log each one. The same receive
+	  path runs on NTN; only the window differs. Every time the report
+	  socket opens, datagrams already queued are drained and logged too.
+
+config APP_NTN_UDP_RX_WAIT_NTN_MS
+	int "UDP receive window after an NTN report (ms)"
+	default 3000
+	help
+	  After the network confirms an NTN report (SO_SENDCB), wait this long
+	  for datagrams before leaving the pass. On a store-and-forward network
+	  replies usually arrive on a later pass, where the drain at socket open
+	  picks them up.
+
 config APP_NTN_TN_CLOUD
 	bool "Fetch the TLE from the nRF Cloud shadow over TN"
 	depends on NRF_CLOUD_COAP

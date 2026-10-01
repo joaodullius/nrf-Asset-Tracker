@@ -21,6 +21,7 @@
 #include <zephyr/net/socket.h>
 #include <zephyr/net/socket_ncs.h>
 #include <sys/socket.h>   /* socket(), connect(), send(), setsockopt() */
+#include <poll.h>         /* poll() for the UDP receive window */
 #include <arpa/inet.h>    /* inet_pton() */
 #include <unistd.h>       /* close() */
 #include <zephyr/sys/timeutil.h>
@@ -157,6 +158,9 @@ struct ntn_state_object {
 	int sock_fd;
 	/* Sequence number of the UDP reports, shared by TN and NTN */
 	uint32_t udp_seq;
+	/* Uptime of the last UDP send and number of datagrams received */
+	int64_t udp_last_send_ms;
+	uint32_t udp_rx_count;
 	struct nrf_modem_gnss_pvt_data_frame last_pvt;
 	double elevation;
 	/* TLE storage */
@@ -1435,7 +1439,70 @@ static void sock_disable_send_ack(int sock_fd)
 	(void)setsockopt(sock_fd, SOL_SOCKET, SO_SENDCB, NULL, 0);
 }
 
-static int sock_open_and_connect(struct ntn_state_object *state)
+/*
+ * Read every datagram that arrives on the report socket within wait_ms.
+ *
+ * Shared by TN and NTN. wait_ms = 0 only drains what is already queued: on
+ * NTN the network stores mobile-terminated data and delivers it on a later
+ * pass, so replies to an earlier report show up as soon as the socket opens.
+ * The fixed local port (APP_NTN_LOCAL_PORT) is what lets them find it.
+ *
+ * Replies are only logged and counted; they are not matched to a report.
+ */
+static void udp_rx_window(struct ntn_state_object *state, const char *access, int wait_ms)
+{
+	char buf[128];
+	int64_t deadline = k_uptime_get() + wait_ms;
+	int received = 0;
+
+	if (state->sock_fd < 0) {
+		return;
+	}
+
+	while (true) {
+		struct pollfd fds = {
+			.fd = state->sock_fd,
+			.events = POLLIN,
+		};
+		int64_t left = deadline - k_uptime_get();
+		int ret;
+		ssize_t len;
+
+		ret = poll(&fds, 1, left > 0 ? (int)left : 0);
+		if (ret < 0) {
+			LOG_WRN("UDP RX over %s: poll failed, error: %d", access, errno);
+			break;
+		}
+
+		if (ret == 0 || !(fds.revents & POLLIN)) {
+			break;
+		}
+
+		len = recv(state->sock_fd, buf, sizeof(buf) - 1, MSG_DONTWAIT);
+		if (len < 0) {
+			if (errno != EAGAIN) {
+				LOG_WRN("UDP RX over %s: recv failed, error: %d", access, errno);
+			}
+			break;
+		}
+
+		buf[len] = '\0';
+		received++;
+		state->udp_rx_count++;
+
+		LOG_INF("UDP RX over %s: \"%s\" (%d bytes, %lld ms after the last send, "
+			"last seq sent %u, %u received since boot)",
+			access, buf, (int)len,
+			state->udp_last_send_ms ? k_uptime_get() - state->udp_last_send_ms : -1LL,
+			state->udp_seq, state->udp_rx_count);
+	}
+
+	if (wait_ms > 0 && received == 0) {
+		LOG_INF("UDP RX over %s: nothing received within %d ms", access, wait_ms);
+	}
+}
+
+static int sock_open_and_connect(struct ntn_state_object *state, const char *access)
 {
 	int err;
 	struct sockaddr_storage host_addr;
@@ -1504,6 +1571,9 @@ static int sock_open_and_connect(struct ntn_state_object *state)
 
 		return err;
 	}
+
+	/* Replies the network held since the last time this socket was open */
+	udp_rx_window(state, access, 0);
 
 	return 0;
 }
@@ -1688,6 +1758,8 @@ static int sock_send_gnss_data(struct ntn_state_object *state, const char *acces
 		return -errno;
 	}
 
+	state->udp_last_send_ms = k_uptime_get();
+
 	LOG_INF("UDP report seq %u over %s queued (%d bytes): %s", seq, access, err, message);
 
 	return 0;
@@ -1734,7 +1806,7 @@ static void tn_send_udp_report(struct ntn_state_object *state)
 {
 	int err;
 
-	err = sock_open_and_connect(state);
+	err = sock_open_and_connect(state, "TN");
 	if (err) {
 		LOG_WRN("TN: UDP socket not opened, error: %d", err);
 		return;
@@ -1743,7 +1815,10 @@ static void tn_send_udp_report(struct ntn_state_object *state)
 	err = sock_send_gnss_data(state, "TN", false);
 	if (err) {
 		LOG_WRN("TN: UDP report not sent, error: %d", err);
+		return;
 	}
+
+	udp_rx_window(state, "TN", CONFIG_APP_NTN_UDP_RX_WAIT_TN_MS);
 }
 
 static int connect_to_cloud(void)
@@ -2693,7 +2768,7 @@ static enum smf_state_result state_ntn_run(void *obj)
 
 			LOG_DBG("PDN resumed, opening socket and sending dummy");
 
-			err = sock_open_and_connect(state);
+			err = sock_open_and_connect(state, "NTN");
 			if (err) {
 				LOG_ERR("Failed to connect socket: %d", err);
 
@@ -2804,7 +2879,7 @@ static enum smf_state_result state_ntn_run(void *obj)
 			state->modem_connectivity_time = k_uptime_get();
 
 			if (state->sock_fd < 0) {
-				err = sock_open_and_connect(state);
+				err = sock_open_and_connect(state, "NTN");
 				if (err) {
 					LOG_ERR("Failed to connect socket: %d", err);
 
@@ -2829,6 +2904,12 @@ static enum smf_state_result state_ntn_run(void *obj)
 			 * honest: send() only means the modem queued the packet.
 			 */
 			ntn_led_udp_ok();
+
+			/* Same receive window as TN. A reply in this pass is rare on a
+			 * store-and-forward network; the drain at the next socket open
+			 * catches the ones delivered later.
+			 */
+			udp_rx_window(state, "NTN", CONFIG_APP_NTN_UDP_RX_WAIT_NTN_MS);
 
 			smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
 
