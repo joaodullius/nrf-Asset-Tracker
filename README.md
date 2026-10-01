@@ -135,7 +135,14 @@ Prerequisites:
 
 Build:
 ```shell
-west build app -b nrf9151dk/nrf9151/ns -- -DEXTRA_CONF_FILE="overlay-ntn-sateliot.conf;overlay-tn-nrfcloud.conf;overlay-tn-emnify.conf"
+west build app -b nrf9151dk/nrf9151/ns -- -DEXTRA_CONF_FILE="overlay-ntn-sateliot.conf;overlay-tn-nrfcloud.conf"
+```
+
+Without a SIM overlay the TN APN is left empty and the network assigns the default APN of the subscription. Add `overlay-tn-emnify.conf` only for a SIM that needs the `em` APN; a wrong fixed APN makes the network reject the attach with EMM cause 19 (ESM failure).
+
+In TN the module also sends one UDP report to `CONFIG_APP_NTN_SERVER_ADDR` before the cloud steps. Every UDP report, TN or NTN, carries a per-boot sequence number and the access it went out on, in the two Thingy World fields the server discards (pressure and humidity):
+```
+<imei>,,<delay>,<rsrp>,<band>,<ue_mode>,<oper>,<lat>,<lon>,<acc>,<elev>,<temp>,<seq>,<TN|NTN>
 ```
 
 `att_ntn tn_trigger` enters the TN state again at any time. Expected log on a successful run:

@@ -155,6 +155,8 @@ struct ntn_state_object {
 	struct k_timer tn_timeout_timer;
 	struct k_timer sgp4_timer;
 	int sock_fd;
+	/* Sequence number of the UDP reports, shared by TN and NTN */
+	uint32_t udp_seq;
 	struct nrf_modem_gnss_pvt_data_frame last_pvt;
 	double elevation;
 	/* TLE storage */
@@ -1530,9 +1532,21 @@ static int sock_send_dummy(struct ntn_state_object *state)
 	return 0;
 }
 
-static int sock_send_gnss_data(struct ntn_state_object *state)
+/*
+ * Build and queue one UDP report.
+ *
+ * access:   "TN" or "NTN", the access the report goes out on.
+ * want_ack: request the SO_SENDCB network ack (used by the NTN state machine).
+ *
+ * In the Thingy World CSV the pressure and humidity fields are fixed
+ * placeholders that the server discards, so they carry the sequence number and
+ * the access tag. The packet keeps its 14 fields and still parses as before.
+ */
+static int sock_send_gnss_data(struct ntn_state_object *state, const char *access,
+			       bool want_ack)
 {
 	int err;
+	uint32_t seq;
 #if defined(CONFIG_APP_NTN_SEND_1200_BYTES)
 	char message[1200];
 #else
@@ -1546,6 +1560,8 @@ static int sock_send_gnss_data(struct ntn_state_object *state)
 
 		return -ENOTCONN;
 	}
+
+	seq = ++state->udp_seq;
 
 #if defined(CONFIG_APP_NTN_THINGY_ROCKS_ENDPOINT)
 	char rsrp[16] = {0}, band[16] = {0}, ue_mode[16] = {0}, oper[16] = {0}, imei[16] = {0};
@@ -1595,9 +1611,9 @@ static int sock_send_gnss_data(struct ntn_state_object *state)
 	}
 
 	// imei,ping_rtt,rsrp,band,ue_mode,oper,lat_str,lon_str,accuracy,...
-	// ...battery_str,temp_str,pressure_str,humidity_str
+	// ...battery_str,temp_str,seq (pressure slot),access (humidity slot)
 	snprintk(message, sizeof(message),
-				"%s,,%d,%s,%s,%s,%s,%.3f,%.3f,%d,%.1f,%s,%s,%s",
+				"%s,,%d,%s,%s,%s,%s,%.3f,%.3f,%d,%.1f,%s,%u,%s",
 				imei,
 				packet_delay,
 				rsrp,
@@ -1607,7 +1623,7 @@ static int sock_send_gnss_data(struct ntn_state_object *state)
 				gnss_data->latitude,
 				gnss_data->longitude,
 				(int)gnss_data->accuracy,
-				state->elevation,temp,"999.99","99.99");
+				state->elevation, temp, seq, access);
 #else
 	// /* Custom UDP endpoint */
 #if defined(CONFIG_APP_NTN_SEND_1200_BYTES)
@@ -1641,10 +1657,11 @@ static int sock_send_gnss_data(struct ntn_state_object *state)
 	message[pos] = '\0';
 #else
 	err = snprintk(message, sizeof(message),
-		"GNSS: lat=%.2f, lon=%.2f, alt=%.2f, time=%04d-%02d-%02d %02d:%02d:%02d",
+		"GNSS: lat=%.2f, lon=%.2f, alt=%.2f, time=%04d-%02d-%02d %02d:%02d:%02d, seq=%u, acc=%s",
 		(double)gnss_data->latitude, (double)gnss_data->longitude, (double)gnss_data->altitude,
 		gnss_data->datetime.year, gnss_data->datetime.month, gnss_data->datetime.day,
-		gnss_data->datetime.hour, gnss_data->datetime.minute, gnss_data->datetime.seconds);
+		gnss_data->datetime.hour, gnss_data->datetime.minute, gnss_data->datetime.seconds,
+		seq, access);
 	if (err < 0 || err >= sizeof(message)) {
 		LOG_ERR("Failed to format GNSS string, error: %d", err);
 		return -EINVAL;
@@ -1652,21 +1669,26 @@ static int sock_send_gnss_data(struct ntn_state_object *state)
 #endif
 #endif
 
-	err = sock_enable_send_ack(state->sock_fd);
-	if (err < 0) {
-		return err;
+	if (want_ack) {
+		err = sock_enable_send_ack(state->sock_fd);
+		if (err < 0) {
+			return err;
+		}
+
+		LOG_DBG("Sending data with network-ack notification");
 	}
 
-	LOG_DBG("Sending data with network-ack notification");
 	err = send(state->sock_fd, message, strlen(message), 0);
 	if (err < 0) {
-		sock_disable_send_ack(state->sock_fd);
+		if (want_ack) {
+			sock_disable_send_ack(state->sock_fd);
+		}
 		LOG_ERR("Failed to send GNSS data, error: %d", errno);
 
 		return -errno;
 	}
 
-	LOG_DBG("Queued data payload of %d bytes", err);
+	LOG_INF("UDP report seq %u over %s queued (%d bytes): %s", seq, access, err, message);
 
 	return 0;
 }
@@ -1691,7 +1713,7 @@ static void try_send_gnss_data(struct ntn_state_object *state)
 		return;
 	}
 
-	err = sock_send_gnss_data(state);
+	err = sock_send_gnss_data(state, "NTN", true);
 	if (err) {
 		LOG_ERR("Failed to send GNSS data: %d", err);
 		ntn_msg_publish(NTN_SEND_FAILED);
@@ -1703,6 +1725,27 @@ static void try_send_gnss_data(struct ntn_state_object *state)
 }
 
 #if defined(CONFIG_APP_NTN_TN_CLOUD)
+/*
+ * Send one UDP report over TN. The socket stays open until the TN state exits,
+ * so the datagram is not dropped by closing the socket right after queuing it.
+ * Failures are logged only: the cloud steps do not depend on this report.
+ */
+static void tn_send_udp_report(struct ntn_state_object *state)
+{
+	int err;
+
+	err = sock_open_and_connect(state);
+	if (err) {
+		LOG_WRN("TN: UDP socket not opened, error: %d", err);
+		return;
+	}
+
+	err = sock_send_gnss_data(state, "TN", false);
+	if (err) {
+		LOG_WRN("TN: UDP report not sent, error: %d", err);
+	}
+}
+
 static int connect_to_cloud(void)
 {
 	int err;
@@ -2292,6 +2335,9 @@ static enum smf_state_result state_tn_run(void *obj)
 
 			k_sleep(K_SECONDS(2));
 
+			/* UDP report first, so it goes out even if the cloud steps fail */
+			tn_send_udp_report(state);
+
 			/* TLE via nRFCloud */
 			err = connect_to_cloud();
 			if (err) {
@@ -2388,10 +2434,15 @@ fail:
 static void state_tn_exit(void *obj)
 {
 	int err;
-
-	ARG_UNUSED(obj);
+	struct ntn_state_object *state = (struct ntn_state_object *)obj;
 
 	LOG_DBG("%s", __func__);
+
+	/* Close the TN report socket before the PDN is put on hold */
+	if (state->sock_fd >= 0) {
+		close(state->sock_fd);
+		state->sock_fd = -1;
+	}
 
 	err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_OFFLINE_KEEP_REG);
 	if (err) {
