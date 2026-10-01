@@ -15,9 +15,10 @@ logging.basicConfig(
 
 # Configuration
 CELESTRAK_URL = "https://celestrak.org/NORAD/elements/gp.php"
-# SATELIOT_CATNR = "60550"  # SATELIOT_1
-# SATELIOT_CATNR = "60552"  # SATELIOT_3
-SATELIOT_CATNR = "60537"  # SATELIOT_4
+# NORAD catalog number of the satellite to track. Override with the
+# SATELLITE_CATNR environment variable:
+#   60550 = SATELIOT_1, 60552 = SATELIOT_3, 60537 = SATELIOT_4
+SATELIOT_CATNR = os.environ.get('SATELLITE_CATNR', "60537")
 NRF_CLOUD_API_URL = "https://api.nrfcloud.com/v1/devices"
 
 def get_tle_from_celestrak(catnr):
@@ -82,8 +83,10 @@ def main():
         logging.error("NRF_CLOUD_API_KEY and DEVICE_ID environment variables must be set")
         return
 
+    once = os.environ.get('ONCE', '') == '1'
+
     while True:
-        logging.info("Starting TLE update cycle")
+        logging.info("Starting TLE update cycle for CATNR %s", SATELIOT_CATNR)
         
         # Fetch TLE data
         tle_data = get_tle_from_celestrak(SATELIOT_CATNR)
@@ -98,6 +101,9 @@ def main():
             else:
                 logging.error("Failed to update TLE data in nRFCloud")
         
+        if once:
+            break
+
         # Wait for one hour before next update
         logging.info("Waiting for next update cycle")
         time.sleep(3600)  # 1 hour in seconds
