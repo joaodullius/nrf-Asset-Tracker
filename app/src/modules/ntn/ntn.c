@@ -37,8 +37,6 @@
 #if defined(CONFIG_APP_NTN_TN_CLOUD)
 #include <net/nrf_cloud.h>
 #include <net/nrf_cloud_coap.h>
-#include <net/nrf_cloud_rest.h>
-#include <nrf_cloud_coap_transport.h>
 #endif
 
 #if defined(CONFIG_MEMFAULT)
