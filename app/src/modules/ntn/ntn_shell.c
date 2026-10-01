@@ -183,6 +183,27 @@ static int cmd_idle_trigger(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+#if defined(CONFIG_APP_NTN_TN_CLOUD)
+static int cmd_tn_trigger(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	struct ntn_msg msg = {
+		.type = TN_TRIGGER
+	};
+
+	int err = zbus_chan_pub(&NTN_CHAN, &msg, K_SECONDS(1));
+	if (err) {
+		shell_print(sh, "Failed to publish TN message, error: %d", err);
+		return 1;
+	}
+
+	shell_print(sh, "Triggering TN (nRF Cloud shadow TLE fetch) manually");
+	return 0;
+}
+#endif
+
 static int cmd_set_gnss_location_manual(const struct shell *sh, size_t argc, char **argv)
 {
 	int err;
@@ -424,6 +445,10 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_att_ntn,
 		  cmd_sgp4_trigger),
 	SHELL_CMD(gnss_trigger, NULL, "Trigger GNSS manually", cmd_gnss_trigger),
 	SHELL_CMD(idle_trigger, NULL, "Trigger IDLE state manually", cmd_idle_trigger),
+#if defined(CONFIG_APP_NTN_TN_CLOUD)
+	SHELL_CMD(tn_trigger, NULL, "Connect over TN and fetch the TLE from the nRF Cloud shadow",
+		  cmd_tn_trigger),
+#endif
 	SHELL_CMD(set_gnss_location, NULL, "Inject GNSS location without running GNSS", cmd_set_gnss_location_manual),
 	SHELL_CMD(set_tle, NULL, "Provision one TLE manually; repeat up to 4 satellites", cmd_set_tle_manual),
 	SHELL_CMD(set_sib32, NULL, "Provision raw SIB32 prediction data", cmd_set_sib32_manual),

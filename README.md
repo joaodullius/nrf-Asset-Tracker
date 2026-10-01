@@ -120,6 +120,38 @@ Triggering SGP4 manually
 <br>
 <br>
 
+## TN leg: TLE from the nRF Cloud shadow (physical SIM)
+
+![Experimental](https://img.shields.io/badge/status-experimental-orange)
+
+The device boots on the terrestrial cellular profile (profile 0, LTE-M/NB-IoT), connects to nRF Cloud over CoAP, reads the TLE from the `tle` object of the desired section of its shadow, pauses the CoAP session and continues to GNSS, SGP4 and the NTN pass. Both cellular profiles use the SIM in the physical slot, so a multi-network SIM such as emnify serves TN and NTN. If the TN PDN does not come up within `CONFIG_APP_NTN_TN_CONNECT_TIMEOUT_SECONDS`, or the cloud steps fail, the module continues to GNSS with whatever prediction data it already has.
+
+Prerequisites:
+- The device is onboarded to nRF Cloud and its client certificate is in the modem.
+- The shadow holds a TLE. Fill it from the PC with `tle_scripts/update_tle.py`; `SATELLITE_CATNR` selects the satellite and `ONCE=1` runs a single update:
+  ```shell
+  NRF_CLOUD_API_KEY=... DEVICE_ID=<nrf-cloud-device-id> SATELLITE_CATNR=60550 ONCE=1 python3 tle_scripts/update_tle.py
+  ```
+
+Build:
+```shell
+west build app -b nrf9151dk/nrf9151/ns -- -DEXTRA_CONF_FILE="overlay-ntn-sateliot.conf;overlay-tn-nrfcloud.conf;overlay-tn-emnify.conf"
+```
+
+`att_ntn tn_trigger` enters the TN state again at any time. Expected log on a successful run:
+```shell
+<inf> ntn_module: TN: connecting to fetch the TLE from the nRF Cloud shadow
+<inf> ntn_module: TN network up (PDN activated)
+<inf> ntn_module: Connecting to nRF Cloud CoAP using client ID: <uuid>
+<inf> ntn_module: Cloud connection established via TN network
+<inf> ntn_module: TLE data stored successfully for SATELIOT_1
+<inf> ntn_module: TLE line 1: 1 60550U ...
+<inf> ntn_module: TLE line 2: 2 60550 ...
+<inf> ntn_module: CoAP connection paused
+```
+
+The SoftSIM variant below uses the same code path; add `overlay-tn-nrfcloud.conf` to its overlay list.
+
 ## \**Advanced: Onomondo SoftSIM + Memfault + TLE from Cloud **
 
 ![Experimental](https://img.shields.io/badge/status-experimental-orange)

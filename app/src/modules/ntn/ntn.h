@@ -57,6 +57,8 @@ enum ntn_msg_type {
 	NTN_SEND_ACK,
 	/* Payload send failed locally or was not acknowledged before timeout */
 	NTN_SEND_FAILED,
+	/* Force the TN state (nRF Cloud shadow TLE fetch) from shell */
+	TN_TRIGGER,
 };
 
 /* NTN module message */

@@ -34,17 +34,23 @@
 #include "sgp4_pass_predict.h"
 #include <math.h>
 
-#if defined(CONFIG_SOFTIM)
+#if defined(CONFIG_APP_NTN_TN_CLOUD)
 #include <net/nrf_cloud.h>
 #include <net/nrf_cloud_coap.h>
 #include <net/nrf_cloud_rest.h>
 #include <nrf_cloud_coap_transport.h>
+#endif
+
+#if defined(CONFIG_MEMFAULT)
 #include <memfault/components.h>
 #include <memfault/ports/zephyr/http.h>
 #include <memfault/metrics/metrics.h>
 #include <memfault/core/data_packetizer.h>
 #include <memfault/core/trace_event.h>
 #include "memfault/panics/coredump.h"
+#endif
+
+#if defined(CONFIG_MEMFAULT_NCS_POST_MODEM_TRACE_ON_COREDUMP)
 #include "memfault_lte_coredump_modem_trace.h"
 #endif
 
@@ -130,7 +136,7 @@ ZBUS_CHAN_ADD_OBS(NTN_CHAN, ntn_subscriber, 0);
 /* State machine states */
 enum ntn_module_state {
 	STATE_RUNNING,
-#if defined(CONFIG_SOFTSIM)
+#if defined(CONFIG_APP_NTN_TN_CLOUD)
 	STATE_TN,
 #endif
 	STATE_GNSS,
@@ -211,7 +217,7 @@ static void cereg_mon(const char *notif);
 
 static void state_running_entry(void *obj);
 static enum smf_state_result state_running_run(void *obj);
-#if defined(CONFIG_SOFTSIM)
+#if defined(CONFIG_APP_NTN_TN_CLOUD)
 static void state_tn_entry(void *obj);
 static enum smf_state_result state_tn_run(void *obj);
 static void state_tn_exit(void *obj);
@@ -230,7 +236,8 @@ static enum smf_state_result state_idle_run(void *obj);
 
 /* State machine definition */
 static const struct smf_state states[] = {
-#ifdef CONFIG_SOFTSIM
+#if defined(CONFIG_APP_NTN_TN_CLOUD)
+	/* Boot into TN to fetch the TLE before the first GNSS fix and SGP4 run */
 	[STATE_RUNNING] = SMF_CREATE_STATE(state_running_entry, state_running_run, NULL,
 				NULL, &states[STATE_TN]),
 #else
@@ -239,7 +246,7 @@ static const struct smf_state states[] = {
 #endif
 	[STATE_GNSS] = SMF_CREATE_STATE(state_gnss_entry, state_gnss_run, state_gnss_exit,
 				&states[STATE_RUNNING], NULL),
-#if defined(CONFIG_SOFTSIM)
+#if defined(CONFIG_APP_NTN_TN_CLOUD)
 	[STATE_TN] = SMF_CREATE_STATE(state_tn_entry, state_tn_run, state_tn_exit,
 				&states[STATE_RUNNING], NULL),
 #endif
@@ -1697,7 +1704,7 @@ static void try_send_gnss_data(struct ntn_state_object *state)
 	LOG_INF("GNSS data queued, waiting for network ack");
 }
 
-#if defined(CONFIG_SOFTSIM)
+#if defined(CONFIG_APP_NTN_TN_CLOUD)
 static int connect_to_cloud(void)
 {
 	int err;
@@ -1775,7 +1782,7 @@ static void state_running_entry(void *obj)
 	 */
 	load_tle_from_kconfig(state);
 
-#ifndef CONFIG_SOFTSIM
+#if !defined(CONFIG_APP_NTN_TN_CLOUD)
 	if (!state->has_valid_tle && !state->has_valid_sib32) {
 		LOG_WRN("Provide SIB32 or TLE before running SGP4: att_ntn set_sib32 \"<SIBCONFIG: 32,...>\" or att_ntn set_tle \"<name>\" \"<line1>\" \"<line2>\"");
 	}
@@ -1879,12 +1886,17 @@ static void state_running_entry(void *obj)
 	}
 
 	if (!profiles_configured) {
+		/* A profile left by an older image (for example "0,2,0") makes the
+		 * configure command fail, so drop both before writing them again.
+		 */
+		(void)lte_lc_cellular_profile_remove(ntn_profile.id);
+		(void)lte_lc_cellular_profile_remove(tn_profile.id);
+
 		/* Set NTN profile */
 		err = lte_lc_cellular_profile_configure(&ntn_profile);
 		if (err) {
+			/* Keep going: the cloud init below must still run */
 			LOG_ERR("Failed to set NTN profile, error: %d", err);
-
-			return;
 		}
 
 		/* Set IPv4 APN for NTN */
@@ -1897,14 +1909,12 @@ static void state_running_entry(void *obj)
 		err = lte_lc_cellular_profile_configure(&tn_profile);
 		if (err) {
 			LOG_ERR("Failed to set TN profile, error: %d", err);
-
-			return;
 		}
 	} else {
 		LOG_INF("CELLULARPRFL already configured");
 	}
 
-#ifdef CONFIG_SOFTSIM
+#if defined(CONFIG_APP_NTN_TN_CLOUD)
 	/* Init nrfcloud coap */
 	err = nrf_cloud_coap_init();
 	if (err) {
@@ -1914,7 +1924,9 @@ static void state_running_entry(void *obj)
 
 		return;
 	}
+#endif
 
+#if defined(CONFIG_MEMFAULT_NCS_POST_MODEM_TRACE_ON_COREDUMP)
 	/* Stop modem trace collection */
 	err = nrf_modem_lib_trace_level_set(NRF_MODEM_LIB_TRACE_LEVEL_OFF);
 	if (err) {
@@ -1969,6 +1981,12 @@ static enum smf_state_result state_running_run(void *obj)
 			smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
 
 			break;
+#if defined(CONFIG_APP_NTN_TN_CLOUD)
+		case TN_TRIGGER:
+			smf_set_state(SMF_CTX(state), &states[STATE_TN]);
+
+			break;
+#endif
 		case NTN_SHELL_SET_GNSS_LOCATION: {
 			struct nrf_modem_gnss_pvt_data_frame pvt = msg->pvt;
 			int64_t now_ms;
@@ -2158,16 +2176,23 @@ static void state_gnss_exit(void *obj)
 	set_gnss_inactive_mode();
 }
 
-#if defined(CONFIG_SOFTSIM)
+#if defined(CONFIG_APP_NTN_TN_CLOUD)
 static void state_tn_entry(void *obj)
 {
 	int err;
 	enum lte_lc_func_mode mode;
-	ARG_UNUSED(obj);
+	struct ntn_state_object *state = (struct ntn_state_object *)obj;
 
 	LOG_DBG("%s", __func__);
+	LOG_INF("TN: connecting to fetch the TLE from the nRF Cloud shadow");
 
-#if defined(CONFIG_SOFTSIM)
+	/* Give up on TN for this cycle if the PDN never comes up. The handler
+	 * publishes GNSS_TRIGGER, so GNSS and SGP4 still run on cached data.
+	 */
+	k_timer_start(&state->tn_timeout_timer,
+		      K_SECONDS(CONFIG_APP_NTN_TN_CONNECT_TIMEOUT_SECONDS), K_NO_WAIT);
+
+#if defined(CONFIG_MEMFAULT_NCS_POST_MODEM_TRACE_ON_COREDUMP)
 	/* Initialize memfault modem trace */
 	err = memfault_lte_coredump_modem_trace_init();
 	if (err && err != -EALREADY) {
@@ -2255,7 +2280,18 @@ static enum smf_state_result state_tn_run(void *obj)
 			LOG_INF("Out of LTE coverage, going to idle state");
 			smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
 			return SMF_EVENT_HANDLED;
-		} else if (msg->type == NETWORK_CONNECTED) {
+		} else if (msg->type == NETWORK_CONNECTED || msg->type == NTN_PDN_RESUMED) {
+			/* NTN_PDN_RESUMED: the TN PDN came back from CFUN=45 with its
+			 * context, so no new PDN activation event will follow.
+			 */
+			LOG_INF("TN network up (%s)",
+				msg->type == NETWORK_CONNECTED ? "PDN activated" : "PDN resumed");
+
+			/* Stop the connect timeout; the failure path below re-arms
+			 * it with the retry delay.
+			 */
+			k_timer_stop(&state->tn_timeout_timer);
+
 			k_sleep(K_SECONDS(2));
 
 			/* TLE via nRFCloud */
@@ -2271,7 +2307,8 @@ static enum smf_state_result state_tn_run(void *obj)
 			uint8_t shadow_buf[1024];
 			size_t shadow_len = sizeof(shadow_buf);
 
-			err = nrf_cloud_coap_shadow_get(shadow_buf, &shadow_len, false, COAP_CONTENT_FORMAT_APP_CBOR);
+			err = nrf_cloud_coap_shadow_get((char *)shadow_buf, &shadow_len, false,
+							COAP_CONTENT_FORMAT_APP_CBOR);
 			if (err) {
 				LOG_ERR("Failed to get shadow data, error: %d", err);
 				goto fail;
@@ -2295,6 +2332,8 @@ static enum smf_state_result state_tn_run(void *obj)
 
 				LOG_INF("TLE data stored successfully for %s",
 					state->tle_entries[tle_index].name);
+				LOG_INF("TLE line 1: %s", state->tle_entries[tle_index].line1);
+				LOG_INF("TLE line 2: %s", state->tle_entries[tle_index].line2);
 			}
 
 
@@ -2309,6 +2348,7 @@ static enum smf_state_result state_tn_run(void *obj)
 				LOG_INF("CoAP connection paused");
 			}
 
+#if defined(CONFIG_MEMFAULT_NCS_POST_MODEM_TRACE_ON_COREDUMP)
 			/* Prepare modem traces for upload */
 			err = memfault_lte_coredump_modem_trace_prepare_for_upload();
 			if (err == -ENODATA) {
@@ -2327,6 +2367,7 @@ static enum smf_state_result state_tn_run(void *obj)
 				}
 				LOG_INF("Successfully posted modem trace data to Memfault");
 			}
+#endif
 
 			/* All operations succeeded, stop timeout timer and proceed to GNSS state */
 			k_timer_stop(&state->tn_timeout_timer);
@@ -2334,8 +2375,11 @@ static enum smf_state_result state_tn_run(void *obj)
 			return SMF_EVENT_HANDLED;
 
 fail:
-			/* Start timeout timer and try again later */
-			k_timer_start(&state->tn_timeout_timer, K_SECONDS(60), K_NO_WAIT);
+			/* Leave TN after a short delay; GNSS and SGP4 run on cached data */
+			LOG_WRN("TN: TLE fetch failed, continuing to GNSS in %d s",
+				CONFIG_APP_NTN_TN_RETRY_SECONDS);
+			k_timer_start(&state->tn_timeout_timer,
+				      K_SECONDS(CONFIG_APP_NTN_TN_RETRY_SECONDS), K_NO_WAIT);
 			return SMF_EVENT_HANDLED;
 		}
 	}
@@ -2539,7 +2583,7 @@ static void state_ntn_entry(void *obj)
 
 	k_sleep(K_SECONDS(1));
 
-#if defined(CONFIG_SOFTSIM)
+#if defined(CONFIG_MEMFAULT_NCS_POST_MODEM_TRACE_ON_COREDUMP)
 	/* Enable modem trace collection */
 	err = nrf_modem_lib_trace_level_set(NRF_MODEM_LIB_TRACE_LEVEL_FULL);
 	if (err) {
@@ -2700,7 +2744,7 @@ static enum smf_state_result state_ntn_run(void *obj)
 			}
 			__fallthrough;
 		case NETWORK_CONNECTION_FAILED:
-#if defined(CONFIG_SOFTSIM)
+#if defined(CONFIG_APP_NTN_TN_CLOUD)
 			smf_set_state(SMF_CTX(state), &states[STATE_TN]);
 #else
 			smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
@@ -2767,7 +2811,7 @@ static void state_ntn_exit(void *obj)
 
 	k_sleep(K_SECONDS(2));
 
-#if defined(CONFIG_SOFTSIM)
+#if defined(CONFIG_MEMFAULT)
 	/* Trigger Memfault log collection */
 	memfault_log_trigger_collection();
 #endif
@@ -2794,7 +2838,7 @@ static void state_ntn_exit(void *obj)
 		LOG_ERR("Failed to set ntn dormant mode");
 	}
 
-#if defined(CONFIG_SOFTSIM)
+#if defined(CONFIG_MEMFAULT_NCS_POST_MODEM_TRACE_ON_COREDUMP)
 	/* Stop modem trace collection */
 	err = nrf_modem_lib_trace_level_set(NRF_MODEM_LIB_TRACE_LEVEL_OFF);
 	if (err) {

@@ -88,6 +88,41 @@ config APP_NTN_LOCAL_PORT
 	  Set to 0 to leave the socket unbound and keep the ephemeral port
 	  behaviour.
 
+config APP_NTN_TN_CLOUD
+	bool "Fetch the TLE from the nRF Cloud shadow over TN"
+	depends on NRF_CLOUD_COAP
+	default y if SOFTSIM
+	help
+	  Boot into the terrestrial (TN) cellular profile, connect to nRF Cloud
+	  over CoAP, read the TLE from the "tle" object of the desired section of
+	  the device shadow and cache it for SGP4. The CoAP session is then
+	  paused so its DTLS connection ID survives the switch to NTN.
+
+	  The shadow is filled from the PC side by tle_scripts/update_tle.py,
+	  which copies the TLE from Celestrak.
+
+	  The device must already be onboarded to nRF Cloud, with its client
+	  certificate in the modem. Works with a physical SIM or with SoftSIM.
+
+if APP_NTN_TN_CLOUD
+
+config APP_NTN_TN_CONNECT_TIMEOUT_SECONDS
+	int "TN network connection timeout in seconds"
+	default 180
+	help
+	  How long the TN state waits for the PDN to come up. When it expires
+	  the module gives up on TN for this cycle and continues to GNSS and
+	  SGP4 with whatever prediction data it already has.
+
+config APP_NTN_TN_RETRY_SECONDS
+	int "Delay before leaving TN after a cloud or shadow failure"
+	default 60
+	help
+	  After the network is up but the nRF Cloud connection, the shadow read
+	  or the TLE decode fails, wait this long before continuing to GNSS.
+
+endif # APP_NTN_TN_CLOUD
+
 config APP_NTN_LEO
 	bool "Enable LEO NTN"
 	help
