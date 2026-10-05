@@ -1490,10 +1490,12 @@ static int set_ntn_active_mode(struct ntn_state_object *state)
 
 	/* SIBCONFIG has one advantage over SIBREQ that it can be cast in CFUN=0 or CFUN=45
 	 * so even if UE does not become RRC connected, it will try to read SIB32
+	* mfw_nrf9151-ntn_1.0.1 rejects the SIB31 arguments (32,1,31,0 returns ERROR),
+	* so only SIB32 is requested.
 	*/
-	err = nrf_modem_at_printf("AT%%SIBCONFIG=32,1,31,0");
+	err = nrf_modem_at_printf("AT%%SIBCONFIG=32,1");
 	if (err) {
-		LOG_WRN("SIBCONFIG=32,1,31,0 failed: %d", err);
+		LOG_WRN("SIBCONFIG=32,1 failed: %d", err);
 	}
 
 	err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_ACTIVATE_LTE);
