@@ -167,12 +167,15 @@ config APP_NTN_TWO_STEP_REJECT_CAUSE
 
 config APP_NTN_TWO_STEP_POWER_OFF_BEFORE_STEP2
 	bool "Switch the modem off (CFUN=0) before step 2"
-	default y
 	help
-	  After an EMM cause 8 reject the UE treats the SIM as invalid for EPS
-	  services until it is switched off, so step 2 starts from CFUN=0.
-	  This also drops the TN registration; TN attaches again the next time
-	  it is used.
+	  3GPP TS 24.301 lets the UE treat the SIM as invalid for EPS after an
+	  EMM cause 8 reject until it is switched off. With mfw_nrf9151-ntn 1.0.1
+	  the modem attached again on the next pass after only CFUN=45, 31, 30
+	  and 21 (Sateliot traces of 2026-09-01/02), so the normal profile
+	  switch is enough and keeps the TN context.
+
+	  Enable this if step 2 never sends an Attach Request. CFUN=0 also
+	  drops the TN registration; TN attaches again the next time it is used.
 
 endif # APP_NTN_TWO_STEP_ATTACH
 
