@@ -132,6 +132,14 @@ config APP_NTN_TN_CONNECT_TIMEOUT_SECONDS
 	  the module gives up on TN for this cycle and continues to GNSS and
 	  SGP4 with whatever prediction data it already has.
 
+config APP_NTN_TN_PREFER_NBIOT
+	bool "Search NB-IoT first on TN"
+	help
+	  Keep LTE-M and NB-IoT enabled on TN but prefer NB-IoT. For a SIM that
+	  is only accepted on NB-IoT (TIM Brasil): with the automatic preference
+	  the modem first tries LTE-M cells of other operators, gets rejected and
+	  can run out of the TN connect timeout before reaching NB-IoT.
+
 config APP_NTN_TN_BEFORE_PASS
 	bool "Run a TN leg between the pre-pass GNSS fix and the pass"
 	default y

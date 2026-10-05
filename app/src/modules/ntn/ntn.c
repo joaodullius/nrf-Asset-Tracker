@@ -2605,8 +2605,14 @@ static void state_tn_entry(void *obj)
 		return;
 	}
 
+	/* LTE-M and NB-IoT both stay enabled to match the TN cellular profile
+	 * (act = LTE-M | NB-IoT; a single-RAT system mode makes CFUN=1 fail).
+	 * APP_NTN_TN_PREFER_NBIOT only changes the order of the search.
+	 */
 	err = lte_lc_system_mode_set(LTE_LC_SYSTEM_MODE_LTEM_NBIOT,
-							LTE_LC_SYSTEM_MODE_PREFER_AUTO);
+				     IS_ENABLED(CONFIG_APP_NTN_TN_PREFER_NBIOT) ?
+				     LTE_LC_SYSTEM_MODE_PREFER_NBIOT :
+				     LTE_LC_SYSTEM_MODE_PREFER_AUTO);
 	if (err) {
 		LOG_ERR("lte_lc_system_mode_set, error: %d", err);
 
