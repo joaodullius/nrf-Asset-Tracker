@@ -183,6 +183,57 @@ static int cmd_idle_trigger(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+static void print_age(const struct shell *sh, const char *label, int64_t at_ms)
+{
+	if (at_ms <= 0) {
+		shell_print(sh, "  %-22s never", label);
+		return;
+	}
+
+	shell_print(sh, "  %-22s %lld s ago", label, (k_uptime_get() - at_ms) / MSEC_PER_SEC);
+}
+
+static int cmd_attach_status(const struct shell *sh, size_t argc, char **argv)
+{
+	struct ntn_attach_status st;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	ntn_attach_status_get(&st);
+
+	shell_print(sh, "NTN attach status");
+	shell_print(sh, "  %-22s %s", "two-step attach", st.two_step_enabled ? "enabled" : "disabled");
+	shell_print(sh, "  %-22s %s", "phase", ntn_attach_phase_str(st.phase));
+	print_age(sh, "phase since", st.phase_since_ms);
+	shell_print(sh, "  %-22s %u", "NTN passes", st.passes);
+	shell_print(sh, "  %-22s %u attempts, %u rejects", "step 1",
+		    st.step1_attempts, st.step1_rejects);
+	shell_print(sh, "  %-22s %u attempts, %u rejects", "step 2",
+		    st.step2_attempts, st.step2_rejects);
+	shell_print(sh, "  %-22s %u", "registrations", st.registrations);
+	if (st.last_reject_cause >= 0) {
+		shell_print(sh, "  %-22s %d", "last reject cause", st.last_reject_cause);
+	} else {
+		shell_print(sh, "  %-22s none", "last reject cause");
+	}
+	print_age(sh, "last reject", st.last_reject_ms);
+	print_age(sh, "last registration", st.last_registered_ms);
+
+	return 0;
+}
+
+static int cmd_attach_reset(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	ntn_attach_status_reset();
+	shell_print(sh, "NTN attach back to step 1, counters cleared");
+
+	return 0;
+}
+
 #if defined(CONFIG_APP_NTN_TN_CLOUD)
 static int cmd_tn_trigger(const struct shell *sh, size_t argc, char **argv)
 {
@@ -445,6 +496,9 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_att_ntn,
 		  cmd_sgp4_trigger),
 	SHELL_CMD(gnss_trigger, NULL, "Trigger GNSS manually", cmd_gnss_trigger),
 	SHELL_CMD(idle_trigger, NULL, "Trigger IDLE state manually", cmd_idle_trigger),
+	SHELL_CMD(attach_status, NULL, "Show the NTN attach phase and counters (two-step attach)",
+		  cmd_attach_status),
+	SHELL_CMD(attach_reset, NULL, "Return the two-step NTN attach to step 1", cmd_attach_reset),
 #if defined(CONFIG_APP_NTN_TN_CLOUD)
 	SHELL_CMD(tn_trigger, NULL, "Connect over TN and fetch the TLE from the nRF Cloud shadow",
 		  cmd_tn_trigger),

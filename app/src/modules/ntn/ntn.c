@@ -618,6 +618,229 @@ static void cereg_mon(const char *notif)
 
 AT_MONITOR(cereg_monitor, "+CEREG", cereg_mon, PAUSED);
 
+/*
+ * NTN attach bookkeeping and the two-step (two-pass) attach.
+ *
+ * With APP_NTN_TWO_STEP_ATTACH the first attach on a pass is expected to be
+ * rejected with APP_NTN_TWO_STEP_REJECT_CAUSE: the satellite fetches the
+ * authentication data during its feeder-link contact, and a new attach on a
+ * later pass is accepted. The phase is kept across passes (RAM only, a reboot
+ * starts again from step 1). One attach attempt is made per pass.
+ *
+ * The counters are kept with or without the two-step logic, so the shell can
+ * always show what the NTN attach did.
+ */
+static struct k_spinlock attach_lock;
+static struct ntn_attach_status attach_status = {
+	.two_step_enabled = IS_ENABLED(CONFIG_APP_NTN_TWO_STEP_ATTACH),
+	.phase = NTN_ATTACH_PHASE_STEP1,
+	.last_reject_cause = -1,
+};
+
+const char *ntn_attach_phase_str(enum ntn_attach_phase phase)
+{
+	switch (phase) {
+	case NTN_ATTACH_PHASE_STEP1:
+		return "step 1";
+	case NTN_ATTACH_PHASE_STEP2:
+		return "step 2";
+	case NTN_ATTACH_PHASE_REGISTERED:
+		return "registered";
+	default:
+		return "unknown";
+	}
+}
+
+void ntn_attach_status_get(struct ntn_attach_status *out)
+{
+	k_spinlock_key_t key = k_spin_lock(&attach_lock);
+
+	*out = attach_status;
+	k_spin_unlock(&attach_lock, key);
+}
+
+void ntn_attach_status_reset(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&attach_lock);
+
+	attach_status = (struct ntn_attach_status) {
+		.two_step_enabled = IS_ENABLED(CONFIG_APP_NTN_TWO_STEP_ATTACH),
+		.phase = NTN_ATTACH_PHASE_STEP1,
+		.phase_since_ms = k_uptime_get(),
+		.last_reject_cause = -1,
+	};
+	k_spin_unlock(&attach_lock, key);
+}
+
+static void attach_phase_set(enum ntn_attach_phase phase)
+{
+	k_spinlock_key_t key = k_spin_lock(&attach_lock);
+
+	if (attach_status.phase != phase) {
+		attach_status.phase = phase;
+		attach_status.phase_since_ms = k_uptime_get();
+	}
+	k_spin_unlock(&attach_lock, key);
+}
+
+static enum ntn_attach_phase attach_phase_get(void)
+{
+	enum ntn_attach_phase phase;
+	k_spinlock_key_t key = k_spin_lock(&attach_lock);
+
+	phase = attach_status.phase;
+	k_spin_unlock(&attach_lock, key);
+
+	return phase;
+}
+
+/* A new NTN pass starts: count it and the attach step it will run */
+static void attach_pass_start(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&attach_lock);
+
+	attach_status.passes++;
+	if (attach_status.phase == NTN_ATTACH_PHASE_STEP1) {
+		attach_status.step1_attempts++;
+	} else if (attach_status.phase == NTN_ATTACH_PHASE_STEP2) {
+		attach_status.step2_attempts++;
+	}
+	k_spin_unlock(&attach_lock, key);
+}
+
+/* The NTN attach completed (PDN up or CEREG registered) */
+static void attach_registered(void)
+{
+	enum ntn_attach_phase prev;
+	k_spinlock_key_t key = k_spin_lock(&attach_lock);
+
+	prev = attach_status.phase;
+	if (prev != NTN_ATTACH_PHASE_REGISTERED) {
+		attach_status.registrations++;
+		attach_status.phase = NTN_ATTACH_PHASE_REGISTERED;
+		attach_status.phase_since_ms = k_uptime_get();
+	}
+	attach_status.last_registered_ms = k_uptime_get();
+	k_spin_unlock(&attach_lock, key);
+
+	if (prev != NTN_ATTACH_PHASE_REGISTERED) {
+		LOG_INF("NTN attach: registered at %s", ntn_attach_phase_str(prev));
+	}
+}
+
+/*
+ * Record an EMM reject and move the two-step phase.
+ * Returns true when the pass should end now (one attach attempt per pass).
+ */
+static bool attach_rejected(int cause)
+{
+	enum ntn_attach_phase prev;
+	enum ntn_attach_phase next;
+	k_spinlock_key_t key = k_spin_lock(&attach_lock);
+
+	prev = attach_status.phase;
+	attach_status.last_reject_cause = cause;
+	attach_status.last_reject_ms = k_uptime_get();
+
+	if (prev == NTN_ATTACH_PHASE_STEP2) {
+		attach_status.step2_rejects++;
+	} else {
+		attach_status.step1_rejects++;
+	}
+
+	next = prev;
+	if (IS_ENABLED(CONFIG_APP_NTN_TWO_STEP_ATTACH)) {
+		if (prev == NTN_ATTACH_PHASE_STEP2) {
+			/* Step 2 rejected: try step 2 again on the next pass */
+			next = NTN_ATTACH_PHASE_STEP2;
+		} else if (cause == CONFIG_APP_NTN_TWO_STEP_REJECT_CAUSE) {
+			/* Step 1 rejected as designed, or a fresh attach after the
+			 * context was lost: step 2 on the next pass
+			 */
+			next = NTN_ATTACH_PHASE_STEP2;
+		} else {
+			next = NTN_ATTACH_PHASE_STEP1;
+		}
+	}
+
+	if (next != prev) {
+		attach_status.phase = next;
+		attach_status.phase_since_ms = k_uptime_get();
+	}
+	k_spin_unlock(&attach_lock, key);
+
+	if (!IS_ENABLED(CONFIG_APP_NTN_TWO_STEP_ATTACH)) {
+		LOG_WRN("NTN attach rejected, EMM cause %d", cause);
+		return false;
+	}
+
+	if (prev != NTN_ATTACH_PHASE_STEP2 && cause == CONFIG_APP_NTN_TWO_STEP_REJECT_CAUSE) {
+		LOG_INF("NTN attach: %s rejected with cause %d as expected, step 2 on the next pass",
+			ntn_attach_phase_str(prev), cause);
+	} else {
+		LOG_WRN("NTN attach: %s rejected with cause %d, %s on the next pass",
+			ntn_attach_phase_str(prev), cause, ntn_attach_phase_str(next));
+	}
+
+	return true;
+}
+
+/*
+ * +CEREG: <stat>,[<tac>],[<ci>],[<AcT>],[<cause_type>],[<reject_cause>],...
+ * Publish NTN_ATTACH_REJECTED when cause_type is 0 (EMM cause) and a reject
+ * cause is present. Active only while in the NTN state.
+ */
+static void cereg_reject_mon(const char *notif)
+{
+	const char *p;
+	int field = 0;
+	int cause_type = -1;
+	int reject_cause = -1;
+
+	if (notif == NULL) {
+		return;
+	}
+
+	p = strchr(notif, ':');
+	if (p == NULL) {
+		return;
+	}
+	p++;
+
+	while (*p != '\0' && *p != '\r' && *p != '\n') {
+		if (*p == ',') {
+			field++;
+			p++;
+			while (*p == ' ') {
+				p++;
+			}
+			if (field == 4 && *p >= '0' && *p <= '9') {
+				cause_type = atoi(p);
+			} else if (field == 5 && *p >= '0' && *p <= '9') {
+				reject_cause = atoi(p);
+			}
+			continue;
+		}
+		p++;
+	}
+
+	if (cause_type != 0 || reject_cause <= 0) {
+		return;
+	}
+
+	struct ntn_msg msg = {
+		.type = NTN_ATTACH_REJECTED,
+		.reject_cause = reject_cause,
+	};
+	int err = zbus_chan_pub(&NTN_CHAN, &msg, K_NO_WAIT);
+
+	if (err) {
+		LOG_ERR("Failed to publish attach reject, error: %d", err);
+	}
+}
+
+AT_MONITOR(cereg_reject_monitor, "+CEREG", cereg_reject_mon, PAUSED);
+
 static void publish_last_pvt(const struct nrf_modem_gnss_pvt_data_frame *pvt)
 {
 	int err;
@@ -2703,6 +2926,25 @@ static void state_ntn_entry(void *obj)
 	state->modem_connectivity_time = 0;
 	state->is_registered = false;
 
+	attach_pass_start();
+	LOG_INF("NTN pass: attach %s", ntn_attach_phase_str(attach_phase_get()));
+
+#if defined(CONFIG_APP_NTN_TWO_STEP_POWER_OFF_BEFORE_STEP2)
+	/* A cause 8 reject makes the UE treat the SIM as invalid for EPS until
+	 * it is switched off, so step 2 starts from CFUN=0. This drops the TN
+	 * registration too; TN attaches again the next time it is used.
+	 */
+	if (attach_phase_get() == NTN_ATTACH_PHASE_STEP2) {
+		LOG_INF("NTN attach: modem off (CFUN=0) before step 2");
+		err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_POWER_OFF);
+		if (err) {
+			LOG_ERR("lte_lc_func_mode_set(POWER_OFF), error: %d", err);
+		}
+	}
+#endif
+
+	at_monitor_resume(&cereg_reject_monitor);
+
 	ntn_led_pass_start();
 
 	k_sleep(K_SECONDS(1));
@@ -2822,7 +3064,22 @@ static enum smf_state_result state_ntn_run(void *obj)
 
 			return SMF_EVENT_HANDLED;
 
+		case NTN_ATTACH_REJECTED:
+			if (!attach_rejected(msg->reject_cause)) {
+				return SMF_EVENT_HANDLED;
+			}
+
+			/* One attach attempt per pass: end it now */
+#if defined(CONFIG_APP_NTN_TN_CLOUD)
+			smf_set_state(SMF_CTX(state), &states[STATE_TN]);
+#else
+			smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
+#endif
+			return SMF_EVENT_HANDLED;
+
 		case NTN_NETWORK_REGISTERED:
+			attach_registered();
+
 			/* Both lte_lc_evt_handler and the +CEREG AT monitor publish
 			 * NTN_NETWORK_REGISTERED on registered states (CEREG=1/5), and
 			 * the modem may emit several CEREG URCs during a single attempt
@@ -2876,6 +3133,7 @@ static enum smf_state_result state_ntn_run(void *obj)
 			return SMF_EVENT_HANDLED;
 
 		case NETWORK_CONNECTED:
+			attach_registered();
 			state->modem_connectivity_time = k_uptime_get();
 
 			if (state->sock_fd < 0) {
@@ -2962,6 +3220,7 @@ static void state_ntn_exit(void *obj)
 
 	at_monitor_pause(&sib3x_monitor);
 	at_monitor_pause(&cereg_monitor);
+	at_monitor_pause(&cereg_reject_monitor);
 
 	err = set_ntn_offline_mode();
 	if (err) {

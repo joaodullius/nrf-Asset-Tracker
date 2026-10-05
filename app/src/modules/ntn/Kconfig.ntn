@@ -141,6 +141,41 @@ config APP_NTN_TN_RETRY_SECONDS
 
 endif # APP_NTN_TN_CLOUD
 
+config APP_NTN_TWO_STEP_ATTACH
+	bool "Two-step (two-pass) NTN attach"
+	help
+	  Network-specific attach sequence, needed for Sateliot. The first
+	  attach on a pass is expected to be rejected with
+	  APP_NTN_TWO_STEP_REJECT_CAUSE: the satellite fetches the
+	  authentication data while in contact with a ground station, and a
+	  new attach on a later pass is accepted.
+
+	  The module keeps the attach phase (step 1, step 2, registered) across
+	  passes, makes one attach attempt per pass and ends the pass as soon as
+	  the network rejects it. The phase is kept in RAM, so a reboot starts
+	  again from step 1. Use "att_ntn attach_status" to see it and
+	  "att_ntn attach_reset" to go back to step 1.
+
+if APP_NTN_TWO_STEP_ATTACH
+
+config APP_NTN_TWO_STEP_REJECT_CAUSE
+	int "EMM cause of the expected step 1 reject"
+	default 8
+	help
+	  EMM reject cause the network sends on step 1. Cause 8 is "EPS
+	  services and non-EPS services not allowed".
+
+config APP_NTN_TWO_STEP_POWER_OFF_BEFORE_STEP2
+	bool "Switch the modem off (CFUN=0) before step 2"
+	default y
+	help
+	  After an EMM cause 8 reject the UE treats the SIM as invalid for EPS
+	  services until it is switched off, so step 2 starts from CFUN=0.
+	  This also drops the TN registration; TN attaches again the next time
+	  it is used.
+
+endif # APP_NTN_TWO_STEP_ATTACH
+
 config APP_NTN_LEO
 	bool "Enable LEO NTN"
 	help

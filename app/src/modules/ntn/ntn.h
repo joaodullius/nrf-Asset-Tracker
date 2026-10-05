@@ -59,6 +59,8 @@ enum ntn_msg_type {
 	NTN_SEND_FAILED,
 	/* Force the TN state (nRF Cloud shadow TLE fetch) from shell */
 	TN_TRIGGER,
+	/* +CEREG reported an EMM reject cause while in NTN (reject_cause set) */
+	NTN_ATTACH_REJECTED,
 };
 
 /* NTN module message */
@@ -74,7 +76,41 @@ struct ntn_msg {
 	char sib32_data[NTN_SIB32_MAX_LEN];
 	char sib31_data[NTN_SIB31_MAX_LEN];
 	struct nrf_modem_gnss_pvt_data_frame pvt;
+	/* EMM reject cause, for NTN_ATTACH_REJECTED */
+	int reject_cause;
 };
+
+/* Attach phase of the two-step (two-pass) NTN attach, see APP_NTN_TWO_STEP_ATTACH */
+enum ntn_attach_phase {
+	NTN_ATTACH_PHASE_STEP1,		/* Next attach is step 1, expected to be rejected */
+	NTN_ATTACH_PHASE_STEP2,		/* Step 1 rejected; step 2 runs on the next pass */
+	NTN_ATTACH_PHASE_REGISTERED,	/* Attached; later passes resume the context */
+};
+
+/* Snapshot of the NTN attach bookkeeping, for the att_ntn attach_status command */
+struct ntn_attach_status {
+	bool two_step_enabled;
+	enum ntn_attach_phase phase;
+	int64_t phase_since_ms;		/* Uptime when the current phase started */
+	uint32_t passes;		/* NTN state entries since boot */
+	uint32_t step1_attempts;
+	uint32_t step1_rejects;
+	uint32_t step2_attempts;
+	uint32_t step2_rejects;
+	uint32_t registrations;
+	int last_reject_cause;		/* -1 when no reject seen */
+	int64_t last_reject_ms;		/* Uptime of the last reject, 0 if none */
+	int64_t last_registered_ms;	/* Uptime of the last registration, 0 if none */
+};
+
+/* Copy the current attach bookkeeping. Safe to call from any thread. */
+void ntn_attach_status_get(struct ntn_attach_status *out);
+
+/* Return the two-step attach to step 1 and clear its counters. */
+void ntn_attach_status_reset(void);
+
+/* Name of an attach phase, for logs and the shell */
+const char *ntn_attach_phase_str(enum ntn_attach_phase phase);
 
 /* Declare the NTN message channel */
 ZBUS_CHAN_DECLARE(NTN_CHAN);
