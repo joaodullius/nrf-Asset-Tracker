@@ -672,17 +672,6 @@ void ntn_attach_status_reset(void)
 	k_spin_unlock(&attach_lock, key);
 }
 
-static void attach_phase_set(enum ntn_attach_phase phase)
-{
-	k_spinlock_key_t key = k_spin_lock(&attach_lock);
-
-	if (attach_status.phase != phase) {
-		attach_status.phase = phase;
-		attach_status.phase_since_ms = k_uptime_get();
-	}
-	k_spin_unlock(&attach_lock, key);
-}
-
 static enum ntn_attach_phase attach_phase_get(void)
 {
 	enum ntn_attach_phase phase;
