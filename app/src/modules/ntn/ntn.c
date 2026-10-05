@@ -183,6 +183,10 @@ struct ntn_state_object {
 	 * NTN exit does not arm its own SGP4 timer.
 	 */
 	bool tn_after_pass;
+	/* TN leg between the pre-pass GNSS fix and the NTN pass: it must not
+	 * chain GNSS and SGP4, which would touch the pass schedule.
+	 */
+	bool tn_pre_pass;
 	bool is_registered;
 	struct sat_data sgp4_sat_data;
 };
@@ -2441,6 +2445,15 @@ static enum smf_state_result state_gnss_run(void *obj)
 			/* Transition based on state flag */
 			if (state->run_sgp4_after_gnss) {
 				smf_set_state(SMF_CTX(state), &states[STATE_SGP4]);
+#if defined(CONFIG_APP_NTN_TN_BEFORE_PASS)
+			} else if (k_timer_remaining_get(&state->ntn_timer) > 0) {
+				/* Pre-pass fix with the pass already scheduled: one TN
+				 * leg now, so the pass is TN, NTN, TN.
+				 */
+				LOG_INF("Pre-pass GNSS done, TN leg before the pass");
+				state->tn_pre_pass = true;
+				smf_set_state(SMF_CTX(state), &states[STATE_TN]);
+#endif
 			} else {
 				smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
 			}
@@ -2492,6 +2505,15 @@ static enum smf_state_result state_gnss_run(void *obj)
 			/* Transition based on state flag */
 			if (state->run_sgp4_after_gnss) {
 				smf_set_state(SMF_CTX(state), &states[STATE_SGP4]);
+#if defined(CONFIG_APP_NTN_TN_BEFORE_PASS)
+			} else if (k_timer_remaining_get(&state->ntn_timer) > 0) {
+				/* Pre-pass fix with the pass already scheduled: one TN
+				 * leg now, so the pass is TN, NTN, TN.
+				 */
+				LOG_INF("Pre-pass GNSS done, TN leg before the pass");
+				state->tn_pre_pass = true;
+				smf_set_state(SMF_CTX(state), &states[STATE_TN]);
+#endif
 			} else {
 				smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
 			}
@@ -2608,6 +2630,15 @@ static enum smf_state_result state_tn_run(void *obj)
 		int err;
 		struct ntn_msg *msg = (struct ntn_msg *)state->msg_buf;
 
+		/* The TN timeout or retry timer asks for GNSS. Before a pass the
+		 * fix is fresh and the schedule is set, so just wait in idle.
+		 */
+		if (state->tn_pre_pass && msg->type == GNSS_TRIGGER) {
+			LOG_WRN("TN leg before the pass incomplete, waiting for the pass");
+			smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
+			return SMF_EVENT_HANDLED;
+		}
+
 		if (msg->type == NETWORK_CONNECTION_FAILED) {
 			LOG_INF("Out of LTE coverage, going to idle state");
 			smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
@@ -2706,6 +2737,12 @@ static enum smf_state_result state_tn_run(void *obj)
 
 			/* All operations succeeded, stop timeout timer and proceed to GNSS state */
 			k_timer_stop(&state->tn_timeout_timer);
+			if (state->tn_pre_pass) {
+				/* The pass is already scheduled; wait for it in idle */
+				LOG_INF("TN leg before the pass done, waiting for the pass");
+				smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
+				return SMF_EVENT_HANDLED;
+			}
 			smf_set_state(SMF_CTX(state), &states[STATE_GNSS]);
 			return SMF_EVENT_HANDLED;
 
@@ -2734,6 +2771,12 @@ static void state_tn_exit(void *obj)
 		close(state->sock_fd);
 		state->sock_fd = -1;
 	}
+
+	/* A pending TN timeout or retry would fire GNSS_TRIGGER later, for
+	 * example in the middle of an NTN pass that interrupted this leg.
+	 */
+	k_timer_stop(&state->tn_timeout_timer);
+	state->tn_pre_pass = false;
 
 	err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_OFFLINE_KEEP_REG);
 	if (err) {

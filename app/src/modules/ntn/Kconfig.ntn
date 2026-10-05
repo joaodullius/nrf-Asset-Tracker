@@ -132,6 +132,15 @@ config APP_NTN_TN_CONNECT_TIMEOUT_SECONDS
 	  the module gives up on TN for this cycle and continues to GNSS and
 	  SGP4 with whatever prediction data it already has.
 
+config APP_NTN_TN_BEFORE_PASS
+	bool "Run a TN leg between the pre-pass GNSS fix and the pass"
+	default y
+	help
+	  After the GNSS fix taken a few minutes before a scheduled pass, resume
+	  TN, send a UDP report and refresh the TLE, then wait for the pass in
+	  idle. With APP_NTN_TN_AFTER_PASS every pass window then has the
+	  sequence TN, NTN, TN, with both context switches in each direction.
+
 config APP_NTN_TN_AFTER_PASS
 	bool "Return to TN after every NTN pass"
 	default y
