@@ -132,6 +132,18 @@ config APP_NTN_TN_CONNECT_TIMEOUT_SECONDS
 	  the module gives up on TN for this cycle and continues to GNSS and
 	  SGP4 with whatever prediction data it already has.
 
+config APP_NTN_TN_AFTER_PASS
+	bool "Return to TN after every NTN pass"
+	default y
+	help
+	  End every NTN pass in the TN state, also after a confirmed send:
+	  the TN context is resumed, a UDP report goes out over TN, the TLE is
+	  refreshed from the shadow, and GNSS and SGP4 schedule the next pass.
+	  This gives a TN, NTN, TN, NTN sequence on every pass.
+
+	  Without it a pass with a confirmed send goes to idle and TN is only
+	  used again after a failed pass or a reboot.
+
 config APP_NTN_TN_RETRY_SECONDS
 	int "Delay before leaving TN after a cloud or shadow failure"
 	default 60

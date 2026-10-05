@@ -179,6 +179,10 @@ struct ntn_state_object {
 	int64_t  modem_connectivity_time;
 	int64_t  pdn_resumed_time;
 	bool rrc_is_connected;
+	/* The NTN pass ends in the TN state; TN then runs GNSS and SGP4, so the
+	 * NTN exit does not arm its own SGP4 timer.
+	 */
+	bool tn_after_pass;
 	bool is_registered;
 	struct sat_data sgp4_sat_data;
 };
@@ -3060,6 +3064,7 @@ static enum smf_state_result state_ntn_run(void *obj)
 
 			/* One attach attempt per pass: end it now */
 #if defined(CONFIG_APP_NTN_TN_CLOUD)
+			state->tn_after_pass = true;
 			smf_set_state(SMF_CTX(state), &states[STATE_TN]);
 #else
 			smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
@@ -3115,6 +3120,7 @@ static enum smf_state_result state_ntn_run(void *obj)
 			__fallthrough;
 		case NETWORK_CONNECTION_FAILED:
 #if defined(CONFIG_APP_NTN_TN_CLOUD)
+			state->tn_after_pass = true;
 			smf_set_state(SMF_CTX(state), &states[STATE_TN]);
 #else
 			smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
@@ -3158,7 +3164,13 @@ static enum smf_state_result state_ntn_run(void *obj)
 			 */
 			udp_rx_window(state, "NTN", CONFIG_APP_NTN_UDP_RX_WAIT_NTN_MS);
 
+#if defined(CONFIG_APP_NTN_TN_AFTER_PASS)
+			LOG_INF("NTN pass done, back to TN");
+			state->tn_after_pass = true;
+			smf_set_state(SMF_CTX(state), &states[STATE_TN]);
+#else
 			smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
+#endif
 
 			return SMF_EVENT_HANDLED;
 
@@ -3169,7 +3181,13 @@ static enum smf_state_result state_ntn_run(void *obj)
 
 			ntn_led_send_failed();
 
+#if defined(CONFIG_APP_NTN_TN_AFTER_PASS)
+			LOG_INF("NTN send failed, back to TN");
+			state->tn_after_pass = true;
+			smf_set_state(SMF_CTX(state), &states[STATE_TN]);
+#else
 			smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
+#endif
 
 			return SMF_EVENT_HANDLED;
 		default:
@@ -3226,6 +3244,16 @@ static void state_ntn_exit(void *obj)
 
 	/* Set flag to run SGP4 after next GNSS fix */
 	state->run_sgp4_after_gnss = true;
+
+	if (state->tn_after_pass) {
+		/* TN runs next and chains GNSS and SGP4, which schedule the next
+		 * pass. A second SGP4 run from the timer could interrupt the TN
+		 * leg or the GNSS fix.
+		 */
+		state->tn_after_pass = false;
+		LOG_INF("Pass ends in TN; the next pass is scheduled after TN and GNSS");
+		return;
+	}
 
 	/* Start SGP4 timer */
 	k_timer_start(&state->sgp4_timer,
