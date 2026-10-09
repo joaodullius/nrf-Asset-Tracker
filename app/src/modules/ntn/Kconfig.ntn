@@ -132,6 +132,14 @@ config APP_NTN_TN_CONNECT_TIMEOUT_SECONDS
 	  the module gives up on TN for this cycle and continues to GNSS and
 	  SGP4 with whatever prediction data it already has.
 
+config APP_NTN_PDN_APN
+	string "APN of the NTN PDN (CID 10)"
+	default ""
+	help
+	  APN requested on the NTN profile. Empty lets the network pick it.
+	  A SIM that needs its own APN on every network (TIM Brasil:
+	  nbiot.gsim) sets it here as well as in the TN default PDN.
+
 config APP_NTN_TN_PREFER_NBIOT
 	bool "Search NB-IoT first on TN"
 	help

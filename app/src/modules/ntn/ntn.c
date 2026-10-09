@@ -2237,12 +2237,6 @@ static void state_running_entry(void *obj)
 			LOG_ERR("Failed to set NTN profile, error: %d", err);
 		}
 
-		/* Set IPv4 APN for NTN */
-		err = nrf_modem_at_printf("AT+CGDCONT=10,\"ip\",\"\"");
-		if (err) {
-			LOG_ERR("Failed to set NTN APN, error: %d", err);
-		}
-
 		/* Set TN profile */
 		err = lte_lc_cellular_profile_configure(&tn_profile);
 		if (err) {
@@ -2250,6 +2244,16 @@ static void state_running_entry(void *obj)
 		}
 	} else {
 		LOG_INF("CELLULARPRFL already configured");
+	}
+
+	/* Set IPv4 APN for NTN. Written at every boot, not only with the
+	 * profiles, so a kit whose profiles already exist picks up a new APN.
+	 */
+	err = nrf_modem_at_printf("AT+CGDCONT=10,\"ip\",\"%s\"", CONFIG_APP_NTN_PDN_APN);
+	if (err) {
+		LOG_ERR("Failed to set NTN APN, error: %d", err);
+	} else {
+		LOG_INF("NTN PDN (CID 10) APN: \"%s\"", CONFIG_APP_NTN_PDN_APN);
 	}
 
 #if defined(CONFIG_APP_NTN_TN_CLOUD)
