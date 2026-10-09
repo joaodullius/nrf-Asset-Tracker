@@ -2249,7 +2249,7 @@ static void state_running_entry(void *obj)
 	/* Set IPv4 APN for NTN. Written at every boot, not only with the
 	 * profiles, so a kit whose profiles already exist picks up a new APN.
 	 */
-	err = nrf_modem_at_printf("AT+CGDCONT=10,\"ip\",\"%s\"", CONFIG_APP_NTN_PDN_APN);
+	err = nrf_modem_at_printf("AT+CGDCONT=10,\"IP\",\"%s\"", CONFIG_APP_NTN_PDN_APN);
 	if (err) {
 		LOG_ERR("Failed to set NTN APN, error: %d", err);
 	} else {
