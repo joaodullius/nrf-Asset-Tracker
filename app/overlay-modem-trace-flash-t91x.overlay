@@ -1,0 +1,59 @@
+/*
+ * Copyright (c) 2026 Nordic Semiconductor ASA
+ *
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ */
+
+/* Modem traces stored on the Thingy:91 X external flash and dumped to UART1 on demand
+ * with `modem_trace dump_uart`. The nrf91-modem-trace-ext-flash snippet has no entry for
+ * this board, so this file does what the snippet does, using the free area of the
+ * Thingy:91 X flash. Do not combine it with the nrf91-modem-trace-uart snippet, both
+ * resize the modem trace shared memory.
+ */
+
+/* Free area of the external flash (0x4d2000), keeping the board's MCUboot secondary slot,
+ * FMFU storage and settings partitions in front of it.
+ */
+/delete-node/ &external_flash_partition;
+
+&flash_ext {
+	partitions {
+		modem_trace: partition@4d2000 {
+			label = "modem_trace";
+			reg = <0x004d2000 0x100000>;
+		};
+	};
+};
+
+/* Dump the stored traces on UART1. */
+&uart1 {
+	status = "okay";
+	current-speed = <1000000>;
+};
+
+/ {
+	chosen {
+		nordic,modem-trace-uart = &uart1;
+	};
+};
+
+/* Increase modem (shared) memory. */
+&sram0_ns_modem {
+	reg = <0x0 0x8800>;
+	ranges = <0x0 0x0 0x8800>;
+
+	cpucell_cpuapp_ipc_shm_trace: sram0_ns_modem@4800 {
+		/* Modem trace memory */
+		reg = <0x4800 0x4000>;
+	};
+};
+
+/* Delete Non-Secure application memory so we can move and shrink it. */
+/delete-node/ &sram0_ns_app;
+
+&sram0_ns {
+	sram0_ns_app: sram0_ns@8800 {
+		/* Redefine smaller Non-Secure application memory. */
+		reg = <0x8800 0x2f800>;
+	};
+};
