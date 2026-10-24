@@ -108,6 +108,11 @@ void ntn_led_pass_scheduled(void)
 	led_set(&leds[LED_SCHED], true);
 }
 
+void ntn_led_pass_scheduled_fallback(void)
+{
+	ntn_led_pass_scheduled();
+}
+
 void ntn_led_no_pass(void)
 {
 	led_blink(&leds[LED_SCHED], BLINK_SLOW_MS);

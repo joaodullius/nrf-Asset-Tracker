@@ -170,6 +170,8 @@ struct ntn_state_object {
 	struct sat_data sib32_sat_data;
 	bool has_valid_sib32;
 	bool has_valid_gnss;
+	/* The cached position is the Kconfig default, not a GNSS fix or an injected one. */
+	bool pos_is_fallback;
 	uint64_t location_validity_end_time;
 	bool run_sgp4_after_gnss;
 	bool boot_trigger_done;
@@ -857,6 +859,7 @@ static void update_cached_pvt(struct ntn_state_object *state,
 {
 	memcpy(&state->last_pvt, pvt, sizeof(state->last_pvt));
 	state->has_valid_gnss = true;
+	state->pos_is_fallback = false;
 	state->location_validity_end_time = CONFIG_APP_NTN_LOCATION_VALIDITY_TIME_SECONDS == 0 ?
 		0 : k_uptime_get() + CONFIG_APP_NTN_LOCATION_VALIDITY_TIME_SECONDS * MSEC_PER_SEC;
 }
@@ -2496,6 +2499,7 @@ static enum smf_state_result state_gnss_run(void *obj)
 				state->last_pvt.flags |= NRF_MODEM_GNSS_PVT_FLAG_FIX_VALID;
 
 				state->has_valid_gnss = true;
+				state->pos_is_fallback = true;
 
 				LOG_WRN("Using hardcoded GNSS fallback: lat=%.6f lon=%.6f alt=%.2f",
 					(double)state->last_pvt.latitude,
@@ -2940,6 +2944,8 @@ static void state_sgp4_entry(void *obj)
 	if (err) {
 		LOG_ERR("Failed to reschedule timers, error: %d", err);
 		ntn_led_no_pass();
+	} else if (state->pos_is_fallback) {
+		ntn_led_pass_scheduled_fallback();
 	} else {
 		ntn_led_pass_scheduled();
 	}

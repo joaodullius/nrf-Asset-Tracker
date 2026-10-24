@@ -37,6 +37,7 @@ static const struct gpio_dt_spec channels[CH_COUNT] = {
 #define COLOR_BLUE	BIT(CH_BLUE)
 #define COLOR_CYAN	(BIT(CH_GREEN) | BIT(CH_BLUE))
 #define COLOR_MAGENTA	(BIT(CH_RED) | BIT(CH_BLUE))
+#define COLOR_YELLOW	(BIT(CH_RED) | BIT(CH_GREEN))
 
 /* Sub-states mirroring the four discrete LEDs, so both backends consume the
  * same events with the same meaning. Only the output stage differs: here
@@ -67,6 +68,7 @@ enum boot_state {
 enum sched_state {
 	SCHED_IDLE,
 	SCHED_OK,
+	SCHED_OK_FALLBACK,	/* Scheduled from the default position, not a fix. */
 	SCHED_NONE,
 };
 
@@ -140,6 +142,9 @@ static void render(void)
 		new_period = BLINK_NORMAL_MS;
 	} else if (sched_state == SCHED_OK) {
 		new_color = COLOR_CYAN;
+		new_period = 0;
+	} else if (sched_state == SCHED_OK_FALLBACK) {
+		new_color = COLOR_YELLOW;
 		new_period = 0;
 	} else if (sched_state == SCHED_NONE) {
 		new_color = COLOR_CYAN;
@@ -222,6 +227,14 @@ void ntn_led_pass_scheduled(void)
 	pass_cycle_reset();
 
 	sched_state = SCHED_OK;
+	render();
+}
+
+void ntn_led_pass_scheduled_fallback(void)
+{
+	pass_cycle_reset();
+
+	sched_state = SCHED_OK_FALLBACK;
 	render();
 }
 

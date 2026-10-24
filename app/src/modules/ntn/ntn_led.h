@@ -39,6 +39,7 @@ extern "C" {
  *   green blink       - pass window.
  *   blue blink        - GNSS searching.
  *   cyan solid        - pass scheduled.
+ *   yellow solid      - pass scheduled from the default position, GNSS had no fix.
  *   cyan slow blink   - prediction found no pass.
  *   blue solid        - GNSS fix.
  *   magenta fast blink - booting, before the first state of the cycle.
@@ -58,6 +59,7 @@ void ntn_led_gnss_fix(void);
 void ntn_led_gnss_timeout(void);
 
 void ntn_led_pass_scheduled(void);
+void ntn_led_pass_scheduled_fallback(void);
 void ntn_led_no_pass(void);
 
 void ntn_led_pass_start(void);
@@ -79,6 +81,7 @@ static inline void ntn_led_gnss_fix(void) { }
 static inline void ntn_led_gnss_timeout(void) { }
 
 static inline void ntn_led_pass_scheduled(void) { }
+static inline void ntn_led_pass_scheduled_fallback(void) { }
 static inline void ntn_led_no_pass(void) { }
 
 static inline void ntn_led_pass_start(void) { }
