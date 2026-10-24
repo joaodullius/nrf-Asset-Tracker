@@ -75,6 +75,19 @@ static void led_blink(struct status_led *led, uint32_t period_ms)
 	(void)k_work_schedule(&led->blink_work, K_MSEC(period_ms));
 }
 
+/* The discrete LEDs have no spare channel for the boot and TN indication. */
+void ntn_led_tn_connecting(void)
+{
+}
+
+void ntn_led_tn_up(void)
+{
+}
+
+void ntn_led_boot_done(void)
+{
+}
+
 void ntn_led_gnss_searching(void)
 {
 	led_blink(&leds[LED_GNSS], BLINK_NORMAL_MS);

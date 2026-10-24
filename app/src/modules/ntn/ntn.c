@@ -2545,6 +2545,7 @@ static void state_tn_entry(void *obj)
 
 	LOG_DBG("%s", __func__);
 	LOG_INF("TN: connecting to fetch the TLE from the nRF Cloud shadow");
+	ntn_led_tn_connecting();
 
 	/* Give up on TN for this cycle if the PDN never comes up. The handler
 	 * publishes GNSS_TRIGGER, so GNSS and SGP4 still run on cached data.
@@ -2661,6 +2662,7 @@ static enum smf_state_result state_tn_run(void *obj)
 			 */
 			LOG_INF("TN network up (%s)",
 				msg->type == NETWORK_CONNECTED ? "PDN activated" : "PDN resumed");
+			ntn_led_tn_up();
 
 			/* Stop the connect timeout; the failure path below re-arms
 			 * it with the retry delay.
@@ -2777,6 +2779,7 @@ static void state_tn_exit(void *obj)
 	struct ntn_state_object *state = (struct ntn_state_object *)obj;
 
 	LOG_DBG("%s", __func__);
+	ntn_led_boot_done();
 
 	/* Close the TN report socket before the PDN is put on hold */
 	if (state->sock_fd >= 0) {
@@ -3322,6 +3325,7 @@ static void state_idle_entry(void *obj)
 	state->rrc_is_connected = false;
 
 	LOG_DBG("%s", __func__);
+	ntn_led_boot_done();
 
 #if defined(CONFIG_APP_NTN_TRIGGER_ON_BOOT)
 	/* Nothing scheduled means this is either boot or a dead end after a

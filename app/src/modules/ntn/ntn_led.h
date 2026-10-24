@@ -41,10 +41,17 @@ extern "C" {
  *   cyan solid        - pass scheduled.
  *   cyan slow blink   - prediction found no pass.
  *   blue solid        - GNSS fix.
+ *   magenta fast blink - booting, before the first state of the cycle.
+ *   magenta blink     - TN: connecting to the terrestrial network.
+ *   magenta solid     - TN: network up, report and cloud steps running.
  *   off               - idle, or GNSS timed out.
  */
 
 #if defined(CONFIG_APP_NTN_STATUS_LEDS)
+
+void ntn_led_tn_connecting(void);
+void ntn_led_tn_up(void);
+void ntn_led_boot_done(void);
 
 void ntn_led_gnss_searching(void);
 void ntn_led_gnss_fix(void);
@@ -62,6 +69,10 @@ void ntn_led_pass_end(void);
 void ntn_led_fatal_error(void);
 
 #else /* !CONFIG_APP_NTN_STATUS_LEDS */
+
+static inline void ntn_led_tn_connecting(void) { }
+static inline void ntn_led_tn_up(void) { }
+static inline void ntn_led_boot_done(void) { }
 
 static inline void ntn_led_gnss_searching(void) { }
 static inline void ntn_led_gnss_fix(void) { }

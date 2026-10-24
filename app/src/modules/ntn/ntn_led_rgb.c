@@ -36,6 +36,7 @@ static const struct gpio_dt_spec channels[CH_COUNT] = {
 #define COLOR_GREEN	BIT(CH_GREEN)
 #define COLOR_BLUE	BIT(CH_BLUE)
 #define COLOR_CYAN	(BIT(CH_GREEN) | BIT(CH_BLUE))
+#define COLOR_MAGENTA	(BIT(CH_RED) | BIT(CH_BLUE))
 
 /* Sub-states mirroring the four discrete LEDs, so both backends consume the
  * same events with the same meaning. Only the output stage differs: here
@@ -55,6 +56,14 @@ enum pass_state {
 	PASS_SEND_FAILED,	/* Latched until the next cycle starts. */
 };
 
+/* Boot and TN, so the LED is not dark from power-on until the first GNSS search. */
+enum boot_state {
+	BOOT_NONE,
+	BOOT_STARTING,
+	BOOT_TN_CONNECTING,
+	BOOT_TN_UP,
+};
+
 enum sched_state {
 	SCHED_IDLE,
 	SCHED_OK,
@@ -64,6 +73,7 @@ enum sched_state {
 static enum gnss_state gnss_state;
 static enum pass_state pass_state;
 static enum sched_state sched_state;
+static enum boot_state boot_state = BOOT_STARTING;
 static bool fatal_error;
 
 /* What is currently on the LED. A period of 0 means solid. */
@@ -116,6 +126,15 @@ static void render(void)
 	} else if (pass_state == PASS_WINDOW) {
 		new_color = COLOR_GREEN;
 		new_period = BLINK_NORMAL_MS;
+	} else if (boot_state == BOOT_STARTING) {
+		new_color = COLOR_MAGENTA;
+		new_period = BLINK_FAST_MS;
+	} else if (boot_state == BOOT_TN_CONNECTING) {
+		new_color = COLOR_MAGENTA;
+		new_period = BLINK_NORMAL_MS;
+	} else if (boot_state == BOOT_TN_UP) {
+		new_color = COLOR_MAGENTA;
+		new_period = 0;
 	} else if (gnss_state == GNSS_SEARCHING) {
 		new_color = COLOR_BLUE;
 		new_period = BLINK_NORMAL_MS;
@@ -159,8 +178,27 @@ static void pass_cycle_reset(void)
 	pass_state = PASS_IDLE;
 }
 
+void ntn_led_tn_connecting(void)
+{
+	boot_state = BOOT_TN_CONNECTING;
+	render();
+}
+
+void ntn_led_tn_up(void)
+{
+	boot_state = BOOT_TN_UP;
+	render();
+}
+
+void ntn_led_boot_done(void)
+{
+	boot_state = BOOT_NONE;
+	render();
+}
+
 void ntn_led_gnss_searching(void)
 {
+	boot_state = BOOT_NONE;
 	pass_cycle_reset();
 
 	gnss_state = GNSS_SEARCHING;
@@ -256,6 +294,9 @@ static int ntn_led_init(void)
 			return err;
 		}
 	}
+
+	/* Show the boot indication right away. */
+	render();
 
 	return 0;
 }
