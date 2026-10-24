@@ -20,7 +20,7 @@
 	partitions {
 		modem_trace: partition@4d2000 {
 			label = "modem_trace";
-			reg = <0x004d2000 0x100000>;
+			reg = <0x004d2000 0x400000>;
 		};
 	};
 };
