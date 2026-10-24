@@ -52,6 +52,7 @@ enum pass_state {
 	PASS_WINDOW,
 	PASS_RRC,
 	PASS_UDP_OK,	/* Latched until the next cycle starts. */
+	PASS_SEND_FAILED,	/* Latched until the next cycle starts. */
 };
 
 enum sched_state {
@@ -106,6 +107,9 @@ static void render(void)
 	} else if (pass_state == PASS_UDP_OK) {
 		new_color = COLOR_GREEN;
 		new_period = 0;
+	} else if (pass_state == PASS_SEND_FAILED) {
+		new_color = COLOR_RED;
+		new_period = BLINK_SLOW_MS;
 	} else if (pass_state == PASS_RRC) {
 		new_color = COLOR_GREEN;
 		new_period = BLINK_FAST_MS;
@@ -200,7 +204,7 @@ void ntn_led_pass_start(void)
 
 void ntn_led_pass_progress(void)
 {
-	if (pass_state != PASS_UDP_OK) {
+	if (pass_state != PASS_UDP_OK && pass_state != PASS_SEND_FAILED) {
 		pass_state = PASS_RRC;
 		render();
 	}
@@ -212,9 +216,17 @@ void ntn_led_udp_ok(void)
 	render();
 }
 
-void ntn_led_pass_end(void)
+void ntn_led_send_failed(void)
 {
 	if (pass_state != PASS_UDP_OK) {
+		pass_state = PASS_SEND_FAILED;
+		render();
+	}
+}
+
+void ntn_led_pass_end(void)
+{
+	if (pass_state != PASS_UDP_OK && pass_state != PASS_SEND_FAILED) {
 		pass_state = PASS_IDLE;
 		render();
 	}

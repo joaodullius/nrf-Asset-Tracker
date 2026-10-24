@@ -34,6 +34,7 @@ extern "C" {
  *
  *   red solid         - fatal error.
  *   green solid       - uplink UDP payload sent (latched until next cycle).
+ *   red slow blink    - uplink send failed (latched until next cycle).
  *   green fast blink  - registered / RRC connected.
  *   green blink       - pass window.
  *   blue blink        - GNSS searching.
