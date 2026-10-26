@@ -448,6 +448,15 @@ config APP_NTN_USB_KEEPALIVE_ENABLE
 	  the USB connection alive. Not needed for other operating systems.
 
 
+config APP_NTN_LOG_FS_LEVEL
+	int "Log level written to the file system backend"
+	depends on LOG_BACKEND_FS
+	default 3
+	help
+	  Maximum level that the file system log backend keeps (1 error, 2 warning,
+	  3 info, 4 debug). The console keeps its own level. Info leaves out the
+	  per-second GNSS satellite list, which would fill the flash in minutes.
+
 module = APP_NTN
 module-str = NTN
 source "subsys/logging/Kconfig.template.log_config"

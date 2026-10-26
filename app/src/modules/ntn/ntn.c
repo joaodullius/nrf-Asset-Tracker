@@ -1168,7 +1168,7 @@ static void gnss_location_work_handler(struct k_work *work)
 	}
 
 	if (pvt_data.flags & NRF_MODEM_GNSS_PVT_FLAG_FIX_VALID) {
-		LOG_DBG("Got valid GNSS location: lat: %f, lon: %f, alt: %f",
+		LOG_INF("Got valid GNSS location: lat: %f, lon: %f, alt: %f",
 			(double)pvt_data.latitude,
 			(double)pvt_data.longitude,
 			(double)pvt_data.altitude);
