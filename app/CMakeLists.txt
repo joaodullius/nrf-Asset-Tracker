@@ -9,6 +9,11 @@ cmake_minimum_required(VERSION 3.20.0)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project("Asset Tracker Template")
 
+# Application log partition (external flash), only with the file system log backend
+if(CONFIG_LOG_BACKEND_FS)
+	ncs_add_partition_manager_config(pm.yml.lfs_log)
+endif()
+
 # Include files that are common for all modules
 zephyr_include_directories(src/common)
 zephyr_include_directories(config)
