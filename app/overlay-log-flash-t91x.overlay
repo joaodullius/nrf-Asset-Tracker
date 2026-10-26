@@ -4,17 +4,20 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
-/* Application log kept in a littlefs on the Thingy:91 X external flash, next to the modem
- * trace partition of overlay-modem-trace-flash-t91x.overlay. The Partition Manager places
- * the partition (pm.yml, 1 MB); the address below is only for the devicetree to parse.
+/* Application log kept in a littlefs on the Thingy:91 X external flash, in the area after the
+ * modem trace partition of overlay-modem-trace-flash-t91x.overlay (0x8d2000).
+ * With the Partition Manager that area is its `external_flash` partition (all the free
+ * space), which the NCS exposes under the devicetree label external_flash_partition; a
+ * partition with any other label is ignored. The size below is only for the devicetree to
+ * parse, and the number of files (LOG_BACKEND_FS_FILES_LIMIT) caps what is really used.
  * It replaces the board's /att_storage mount, which is not used in the NTN build.
  * Read the log with the shell: `fs ls /lfs1`, `fs cat /lfs1/log.0000`.
  */
 
 &flash_ext {
 	partitions {
-		lfs_log: partition@8d2000 {
-			label = "lfs_log";
+		external_flash_partition: partition@8d2000 {
+			label = "external_flash_partition";
 			reg = <0x008d2000 0x100000>;
 		};
 	};
@@ -27,7 +30,7 @@
 		lfs1: lfs1 {
 			compatible = "zephyr,fstab,littlefs";
 			mount-point = "/lfs1";
-			partition = <&lfs_log>;
+			partition = <&external_flash_partition>;
 			automount;
 			read-size = <16>;
 			prog-size = <16>;
