@@ -4,9 +4,11 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
-/* Application log kept in a littlefs on the Thingy:91 X external flash, right after the
- * modem trace partition of overlay-modem-trace-flash-t91x.overlay (0x4d2000 + 4 MB).
- * Read it with the shell: `fs ls /lfs1`, `fs cat /lfs1/log.00000`.
+/* Application log kept in a littlefs on the Thingy:91 X external flash, next to the modem
+ * trace partition of overlay-modem-trace-flash-t91x.overlay. The Partition Manager places
+ * the partition (pm.yml, 1 MB); the address below is only for the devicetree to parse.
+ * It replaces the board's /att_storage mount, which is not used in the NTN build.
+ * Read the log with the shell: `fs ls /lfs1`, `fs cat /lfs1/log.0000`.
  */
 
 &flash_ext {
