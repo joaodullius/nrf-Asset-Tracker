@@ -33,6 +33,9 @@
 #include "ntn.h"
 #include "ntn_led.h"
 #include "sgp4_pass_predict.h"
+#if defined(CONFIG_APP_POWER)
+#include "power.h"
+#endif
 #include <math.h>
 
 #if defined(CONFIG_APP_NTN_TN_CLOUD)
@@ -131,6 +134,45 @@ ZBUS_MSG_SUBSCRIBER_DEFINE(ntn_subscriber);
 ZBUS_CHAN_ADD_OBS(NTN_CHAN, ntn_subscriber, 0);
 
 #define MAX_MSG_SIZE	sizeof(struct ntn_msg)
+
+#if defined(CONFIG_APP_POWER)
+/* Battery sample for the UDP report. The power module answers a sample request on its own
+ * channel; the answer is kept here and the sender waits a short time for it.
+ */
+static K_SEM_DEFINE(battery_sem, 0, 1);
+static volatile double battery_percentage = -1.0;
+static volatile double battery_voltage;
+static volatile bool battery_charging;
+
+static void power_listener_cb(const struct zbus_channel *chan)
+{
+	const struct power_msg *msg = zbus_chan_const_msg(chan);
+
+	if (msg->type == POWER_BATTERY_PERCENTAGE_SAMPLE_RESPONSE) {
+		battery_percentage = msg->percentage;
+		battery_voltage = msg->voltage;
+		battery_charging = msg->charging;
+		k_sem_give(&battery_sem);
+	}
+}
+
+ZBUS_LISTENER_DEFINE(ntn_power_listener, power_listener_cb);
+ZBUS_CHAN_ADD_OBS(power_chan, ntn_power_listener, 0);
+
+/* Ask the power module for a fresh sample; on timeout the previous one is used (-1 if none). */
+static double battery_sample(void)
+{
+	struct power_msg req = { .type = POWER_BATTERY_PERCENTAGE_SAMPLE_REQUEST };
+
+	k_sem_reset(&battery_sem);
+	if (zbus_chan_pub(&power_chan, &req, K_SECONDS(1)) == 0 &&
+	    k_sem_take(&battery_sem, K_SECONDS(2)) != 0) {
+		LOG_WRN("No battery sample from the power module, using the previous one");
+	}
+
+	return battery_percentage;
+}
+#endif /* CONFIG_APP_POWER */
 
 /* State machine states */
 enum ntn_module_state {
@@ -1905,6 +1947,15 @@ static int sock_send_gnss_data(struct ntn_state_object *state, const char *acces
 		packet_delay = -1;
 	}
 
+#if defined(CONFIG_APP_POWER)
+	/* The slot the server calls "battery" (field 10) carries the battery percentage. */
+	double bat = battery_sample();
+#define BATTERY_OR_ELEVATION	bat
+	LOG_INF("Battery %.0f %% (%.3f V)%s", bat, battery_voltage,
+		battery_charging ? ", charging" : "");
+#else
+#define BATTERY_OR_ELEVATION	state->elevation
+#endif
 	// imei,ping_rtt,rsrp,band,ue_mode,oper,lat_str,lon_str,accuracy,...
 	// ...battery_str,temp_str,seq (pressure slot),access (humidity slot)
 	snprintk(message, sizeof(message),
@@ -1918,7 +1969,7 @@ static int sock_send_gnss_data(struct ntn_state_object *state, const char *acces
 				gnss_data->latitude,
 				gnss_data->longitude,
 				(int)gnss_data->accuracy,
-				state->elevation, temp, seq, access);
+				BATTERY_OR_ELEVATION, temp, seq, access);
 #else
 	// /* Custom UDP endpoint */
 #if defined(CONFIG_APP_NTN_SEND_1200_BYTES)
