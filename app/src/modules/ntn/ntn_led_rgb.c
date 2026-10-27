@@ -16,6 +16,10 @@ LOG_MODULE_REGISTER(ntn_led, CONFIG_APP_NTN_LOG_LEVEL);
 #define BLINK_FAST_MS	150
 #define BLINK_SLOW_MS	1000
 
+/* Idle heartbeat: a short flash so a dark LED does not look like a dead board. */
+#define HEARTBEAT_ON_MS		80
+#define HEARTBEAT_PERIOD_MS	3000
+
 /* The three channels of the single RGB LED (Thingy:91 X aliases led0..led2). */
 enum rgb_channel {
 	CH_RED,
@@ -38,6 +42,7 @@ static const struct gpio_dt_spec channels[CH_COUNT] = {
 #define COLOR_CYAN	(BIT(CH_GREEN) | BIT(CH_BLUE))
 #define COLOR_MAGENTA	(BIT(CH_RED) | BIT(CH_BLUE))
 #define COLOR_YELLOW	(BIT(CH_RED) | BIT(CH_GREEN))
+#define COLOR_WHITE	(BIT(CH_RED) | BIT(CH_GREEN) | BIT(CH_BLUE))
 
 /* Sub-states mirroring the four discrete LEDs, so both backends consume the
  * same events with the same meaning. Only the output stage differs: here
@@ -78,9 +83,12 @@ static enum sched_state sched_state;
 static enum boot_state boot_state = BOOT_STARTING;
 static bool fatal_error;
 
-/* What is currently on the LED. A period of 0 means solid. */
+/* What is currently on the LED. An on time of 0 means solid; otherwise the LED is on for
+ * on_ms and off for off_ms.
+ */
 static uint8_t color;
-static uint32_t period_ms;
+static uint32_t on_ms;
+static uint32_t off_ms;
 static bool level;
 
 static void blink_work_fn(struct k_work *work);
@@ -99,7 +107,7 @@ static void blink_work_fn(struct k_work *work)
 
 	level = !level;
 	channels_apply(level ? color : COLOR_OFF);
-	(void)k_work_schedule(&blink_work, K_MSEC(period_ms));
+	(void)k_work_schedule(&blink_work, K_MSEC(level ? on_ms : off_ms));
 }
 
 /* Picks the colour and blink rate of the highest-priority active sub-state.
@@ -112,6 +120,8 @@ static void render(void)
 {
 	uint8_t new_color;
 	uint32_t new_period;
+	uint32_t new_on;
+	uint32_t new_off;
 
 	if (fatal_error) {
 		new_color = COLOR_RED;
@@ -153,24 +163,33 @@ static void render(void)
 		new_color = COLOR_BLUE;
 		new_period = 0;
 	} else {
-		new_color = COLOR_OFF;
+		new_color = COLOR_WHITE;
 		new_period = 0;
+		new_on = HEARTBEAT_ON_MS;
+		new_off = HEARTBEAT_PERIOD_MS - HEARTBEAT_ON_MS;
+		goto apply;
 	}
 
-	if (new_color == color && new_period == period_ms) {
+	/* Every other state is solid (period 0) or blinks with equal on and off times. */
+	new_on = new_period;
+	new_off = new_period;
+
+apply:
+	if (new_color == color && new_on == on_ms && new_off == off_ms) {
 		return;
 	}
 
 	color = new_color;
-	period_ms = new_period;
+	on_ms = new_on;
+	off_ms = new_off;
 
 	(void)k_work_cancel_delayable(&blink_work);
 
 	level = true;
 	channels_apply(color);
 
-	if (period_ms) {
-		(void)k_work_schedule(&blink_work, K_MSEC(period_ms));
+	if (on_ms) {
+		(void)k_work_schedule(&blink_work, K_MSEC(on_ms));
 	}
 }
 
