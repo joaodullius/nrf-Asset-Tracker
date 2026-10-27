@@ -2898,6 +2898,7 @@ static void state_sgp4_entry(void *obj)
 	err = date_time_now(&now_ms);
 	if (err) {
 		LOG_ERR("Failed to get current date time, error: %d", err);
+		ntn_led_no_pass();
 		smf_set_state(SMF_CTX(state), &states[STATE_IDLE]);
 		return;
 	}
