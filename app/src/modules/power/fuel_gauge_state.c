@@ -18,7 +18,7 @@ LOG_MODULE_DECLARE(power, CONFIG_APP_POWER_LOG_LEVEL);
 struct fuel_gauge_state {
 	uint32_t magic;     /* Magic number to identify valid state */
 	uint32_t size;      /* Size of state data */
-	uint8_t state[256]; /* Fuel gauge state buffer */
+	uint8_t state[512]; /* Fuel gauge state buffer (the NCS 3.4 library needs 360 bytes) */
 };
 
 /* Place the fuel gauge state in the noinit RAM section.
