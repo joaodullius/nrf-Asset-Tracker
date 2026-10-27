@@ -557,7 +557,12 @@ static void sample(int64_t *ref_time)
 				  NPM13XX_CHG_STATUS_CC_MASK |
 				  NPM13XX_CHG_STATUS_CV_MASK)) != 0;
 
-	state_of_charge = nrf_fuel_gauge_process(voltage, current, temp, delta, NULL);
+	err = nrf_fuel_gauge_process(voltage, current, temp, delta, &state_of_charge, NULL);
+	if (err) {
+		LOG_ERR("nrf_fuel_gauge_process, error: %d", err);
+		SEND_FATAL_ERROR();
+		return;
+	}
 
 #endif /* CONFIG_MEMFAULT_NRF_PLATFORM_BATTERY_NPM13XX */
 
