@@ -122,6 +122,7 @@ static void render(void)
 	uint32_t new_period;
 	uint32_t new_on;
 	uint32_t new_off;
+	bool pulse = false;
 
 	if (fatal_error) {
 		new_color = COLOR_RED;
@@ -129,6 +130,7 @@ static void render(void)
 	} else if (pass_state == PASS_UDP_OK) {
 		new_color = COLOR_GREEN;
 		new_period = 0;
+		pulse = true;
 	} else if (pass_state == PASS_SEND_FAILED) {
 		new_color = COLOR_RED;
 		new_period = BLINK_SLOW_MS;
@@ -153,9 +155,11 @@ static void render(void)
 	} else if (sched_state == SCHED_OK) {
 		new_color = COLOR_CYAN;
 		new_period = 0;
+		pulse = true;
 	} else if (sched_state == SCHED_OK_FALLBACK) {
 		new_color = COLOR_YELLOW;
 		new_period = 0;
+		pulse = true;
 	} else if (sched_state == SCHED_NONE) {
 		new_color = COLOR_CYAN;
 		new_period = BLINK_SLOW_MS;
@@ -170,9 +174,16 @@ static void render(void)
 		goto apply;
 	}
 
-	/* Every other state is solid (period 0) or blinks with equal on and off times. */
-	new_on = new_period;
-	new_off = new_period;
+	/* Every other state is solid (period 0) or blinks with equal on and off times. The states
+	 * that last for hours or days (pass scheduled, uplink done) only flash, to save the battery.
+	 */
+	if (pulse) {
+		new_on = HEARTBEAT_ON_MS;
+		new_off = HEARTBEAT_PERIOD_MS - HEARTBEAT_ON_MS;
+	} else {
+		new_on = new_period;
+		new_off = new_period;
+	}
 
 apply:
 	if (new_color == color && new_on == on_ms && new_off == off_ms) {
