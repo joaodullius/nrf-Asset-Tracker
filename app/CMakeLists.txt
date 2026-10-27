@@ -17,6 +17,8 @@ if(CONFIG_APP_NTN_MODE)
 	add_subdirectory(src/modules/ntn)
 	add_subdirectory(src/modules/sgp4)
 	add_subdirectory(src/cbor)
+	# Battery sample for the UDP report (Thingy:91 X, overlay-battery-t91x.conf)
+	add_subdirectory_ifdef(CONFIG_APP_POWER src/modules/power)
 else()
 # Add main application source
 target_sources(app PRIVATE src/main.c)
