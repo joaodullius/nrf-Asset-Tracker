@@ -45,6 +45,9 @@ enum ntn_msg_type {
 	NTN_SHELL_SET_DATETIME, /* Set date time from shell */
 	NTN_SHELL_SET_GNSS_LOCATION, /* Set GNSS location from shell */
 	NTN_SHELL_SET_TLE, /* Set TLE from shell */
+	NTN_SHELL_USE_TLE, /* Replace all TLEs and SIB32 with one TLE from shell */
+	NTN_SHELL_CLEAR_TLE, /* Forget saved TLEs, back to the Kconfig TLE */
+	NTN_SHELL_LIST_TLE, /* Log the TLEs in use */
 	NTN_SHELL_SET_PEAK_OFFSET, /* Set NTN activation offset from shell */
 	NTN_SET_SIB32, /* Set SIB32 prediction data from shell or AT monitor */
 	NTN_SET_SIB31, /* Set SIB31 prediction data from shell or AT monitor */

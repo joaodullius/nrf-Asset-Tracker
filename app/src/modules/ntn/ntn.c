@@ -33,6 +33,9 @@
 #include "ntn.h"
 #include "ntn_led.h"
 #include "sgp4_pass_predict.h"
+#if defined(CONFIG_APP_NTN_TLE_PERSIST)
+#include <zephyr/settings/settings.h>
+#endif
 #if defined(CONFIG_APP_POWER)
 #include "power.h"
 #endif
@@ -942,6 +945,199 @@ static int update_cached_tle(struct ntn_state_object *state, const struct ntn_ms
 {
 	return store_tle_entry(state, msg->tle_name, msg->tle_line1, msg->tle_line2);
 }
+
+static void log_cached_tles(const struct ntn_state_object *state)
+{
+	if (state->tle_count == 0) {
+		LOG_INF("No TLE in use");
+		return;
+	}
+
+	for (int i = 0; i < state->tle_count; i++) {
+		LOG_INF("TLE %d/%u: %s", i + 1, (unsigned int)state->tle_count,
+			state->tle_entries[i].name);
+		LOG_INF("  %s", state->tle_entries[i].line1);
+		LOG_INF("  %s", state->tle_entries[i].line2);
+	}
+}
+
+#if defined(CONFIG_APP_NTN_TLE_PERSIST)
+/* TLEs set from the shell are kept in settings, one key per entry plus a count:
+ * ntn/tle/n = number of entries, ntn/tle/0..3 = struct tle_cache_entry.
+ * The saved set replaces the Kconfig TLE at boot, so the satellite can be changed
+ * from the shell without flashing a new image.
+ */
+#define TLE_SETTINGS_COUNT_KEY "ntn/tle/n"
+#define TLE_SETTINGS_ENTRY_FMT "ntn/tle/%d"
+
+struct tle_settings_load_ctx {
+	struct tle_cache_entry entries[MAX_SATELLITES];
+	int count;
+	uint32_t loaded_mask;
+};
+
+static int tle_settings_load_cb(const char *key, size_t len, settings_read_cb read_cb,
+				void *cb_arg, void *param)
+{
+	struct tle_settings_load_ctx *ctx = param;
+	ssize_t rc;
+
+	if (key == NULL) {
+		return 0;
+	}
+
+	if (strcmp(key, "n") == 0) {
+		uint8_t count;
+
+		if (len != sizeof(count)) {
+			return 0;
+		}
+
+		rc = read_cb(cb_arg, &count, sizeof(count));
+		if (rc == sizeof(count)) {
+			ctx->count = MIN(count, MAX_SATELLITES);
+		}
+
+		return 0;
+	}
+
+	if (key[0] >= '0' && key[0] < '0' + MAX_SATELLITES && key[1] == '\0') {
+		int index = key[0] - '0';
+
+		if (len != sizeof(ctx->entries[index])) {
+			return 0;
+		}
+
+		rc = read_cb(cb_arg, &ctx->entries[index], sizeof(ctx->entries[index]));
+		if (rc == sizeof(ctx->entries[index])) {
+			ctx->loaded_mask |= BIT(index);
+		}
+	}
+
+	return 0;
+}
+
+static int tle_settings_init(void)
+{
+	static bool initialized;
+	int err;
+
+	if (initialized) {
+		return 0;
+	}
+
+	err = settings_subsys_init();
+	if (err) {
+		LOG_ERR("Settings init failed, error: %d", err);
+		return err;
+	}
+
+	initialized = true;
+
+	return 0;
+}
+
+static void save_tles(const struct ntn_state_object *state)
+{
+	char key[sizeof(TLE_SETTINGS_ENTRY_FMT) + 4];
+	uint8_t count = state->tle_count;
+	int err;
+
+	if (tle_settings_init()) {
+		return;
+	}
+
+	for (int i = 0; i < count; i++) {
+		snprintk(key, sizeof(key), TLE_SETTINGS_ENTRY_FMT, i);
+		err = settings_save_one(key, &state->tle_entries[i],
+					sizeof(state->tle_entries[i]));
+		if (err) {
+			LOG_ERR("Failed to save TLE %d, error: %d", i, err);
+			return;
+		}
+	}
+
+	err = settings_save_one(TLE_SETTINGS_COUNT_KEY, &count, sizeof(count));
+	if (err) {
+		LOG_ERR("Failed to save TLE count, error: %d", err);
+		return;
+	}
+
+	LOG_INF("Saved %u TLE(s); they replace the built-in TLE after a reset",
+		(unsigned int)count);
+}
+
+static void forget_saved_tles(void)
+{
+	char key[sizeof(TLE_SETTINGS_ENTRY_FMT) + 4];
+
+	if (tle_settings_init()) {
+		return;
+	}
+
+	(void)settings_delete(TLE_SETTINGS_COUNT_KEY);
+
+	for (int i = 0; i < MAX_SATELLITES; i++) {
+		snprintk(key, sizeof(key), TLE_SETTINGS_ENTRY_FMT, i);
+		(void)settings_delete(key);
+	}
+}
+
+static void load_saved_tles(struct ntn_state_object *state)
+{
+	struct tle_settings_load_ctx ctx = { 0 };
+	int err;
+
+	if (tle_settings_init()) {
+		return;
+	}
+
+	err = settings_load_subtree_direct("ntn/tle", tle_settings_load_cb, &ctx);
+	if (err) {
+		LOG_ERR("Failed to load saved TLEs, error: %d", err);
+		return;
+	}
+
+	if (ctx.count == 0) {
+		return;
+	}
+
+	for (int i = 0; i < ctx.count; i++) {
+		if (!(ctx.loaded_mask & BIT(i))) {
+			LOG_WRN("Saved TLE set is incomplete, keeping the built-in TLE");
+			return;
+		}
+	}
+
+	clear_cached_tles(state);
+
+	for (int i = 0; i < ctx.count; i++) {
+		ctx.entries[i].name[sizeof(ctx.entries[i].name) - 1] = '\0';
+		ctx.entries[i].line1[sizeof(ctx.entries[i].line1) - 1] = '\0';
+		ctx.entries[i].line2[sizeof(ctx.entries[i].line2) - 1] = '\0';
+		(void)store_tle_entry(state, ctx.entries[i].name, ctx.entries[i].line1,
+				      ctx.entries[i].line2);
+	}
+
+	LOG_INF("Loaded %u saved TLE(s) from settings (set from the shell)",
+		(unsigned int)state->tle_count);
+	log_cached_tles(state);
+}
+#else
+static inline void save_tles(const struct ntn_state_object *state)
+{
+	ARG_UNUSED(state);
+}
+
+static inline void forget_saved_tles(void)
+{
+}
+
+static inline void load_saved_tles(struct ntn_state_object *state)
+{
+	ARG_UNUSED(state);
+}
+#endif /* CONFIG_APP_NTN_TLE_PERSIST */
 
 static char *next_token(char **saveptr, char *delim)
 {
@@ -2173,6 +2369,7 @@ static void state_running_entry(void *obj)
 	 * otherwise leave the module running with no prediction data at all.
 	 */
 	load_tle_from_kconfig(state);
+	load_saved_tles(state);
 
 #if !defined(CONFIG_APP_NTN_TN_CLOUD)
 	if (!state->has_valid_tle && !state->has_valid_sib32) {
@@ -2420,10 +2617,56 @@ static enum smf_state_result state_running_run(void *obj)
 				LOG_INF("Stored manual TLE %d/%u for %s",
 					tle_index + 1, (unsigned int)state->tle_count,
 					state->tle_entries[tle_index].name);
+				save_tles(state);
 			}
 
 			break;
 		}
+		case NTN_SHELL_USE_TLE: {
+			/* Replace the whole satellite set: the built-in TLE, any TLE set
+			 * earlier, and the SIB32 cache, which would otherwise keep the
+			 * prediction on the satellite seen in the last pass.
+			 */
+			int tle_index;
+
+			clear_cached_tles(state);
+			clear_cached_sib32(state);
+
+			tle_index = update_cached_tle(state, msg);
+			if (tle_index < 0) {
+				LOG_ERR("Failed to store TLE, error: %d", tle_index);
+				break;
+			}
+
+			LOG_INF("Satellite replaced: now tracking only %s",
+				state->tle_entries[tle_index].name);
+			save_tles(state);
+
+			if (state->ctx.current == &states[STATE_IDLE]) {
+				LOG_INF("Recomputing the next pass for the new satellite");
+				smf_set_state(SMF_CTX(state), &states[STATE_SGP4]);
+			} else {
+				LOG_INF("Not idle; the new TLE is used on the next SGP4 run "
+					"(or run att_ntn sgp4_trigger)");
+			}
+
+			break;
+		}
+		case NTN_SHELL_CLEAR_TLE:
+			forget_saved_tles();
+			clear_cached_tles(state);
+			load_tle_from_kconfig(state);
+			LOG_INF("Saved TLEs erased; back to the built-in TLE");
+			log_cached_tles(state);
+
+			break;
+		case NTN_SHELL_LIST_TLE:
+			LOG_INF("Prediction source: %s",
+				state->has_valid_sib32 ? "SIB32 (preferred over TLE)" :
+				state->has_valid_tle ? "TLE" : "none");
+			log_cached_tles(state);
+
+			break;
 		case NTN_SHELL_SET_PEAK_OFFSET:
 			state->ntn_peak_offset_seconds = msg->peak_offset_seconds;
 			LOG_INF("NTN peak-time offset updated to %ld seconds",

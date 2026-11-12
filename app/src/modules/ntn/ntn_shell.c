@@ -67,6 +67,17 @@ static void print_set_tle_help(const struct shell *sh)
 	shell_print(sh, "Repeat up to 4 times to provision multiple satellites");
 }
 
+static void print_use_tle_help(const struct shell *sh)
+{
+	shell_print(sh, "Usage: att_ntn use_tle \"<name>\" \"<line1>\" \"<line2>\"");
+	shell_print(sh, "Replaces every TLE (built-in or set before) and the cached SIB32 with this");
+	shell_print(sh, "one satellite, saves it across resets and recomputes the next pass when idle.");
+	shell_print(sh, "Example: att_ntn use_tle \"SATELIOT_1\" "
+		    "\"1 60550U 24149CL  26041.62762187  .00003124  00000+0  27307-3 0  9999\" "
+		    "\"2 60550  97.6859 119.6343 0008059 130.5773 229.6152 14.97467371 81125\"");
+	shell_print(sh, "Undo with: att_ntn clear_tle");
+}
+
 static void print_set_sib32_help(const struct shell *sh)
 {
 	shell_print(sh, "Usage: att_ntn set_sib32 \"<SIBCONFIG: 32,...>\"");
@@ -303,15 +314,16 @@ static int cmd_set_gnss_location_manual(const struct shell *sh, size_t argc, cha
 	return 0;
 }
 
-static int cmd_set_tle_manual(const struct shell *sh, size_t argc, char **argv)
+static int publish_tle(const struct shell *sh, size_t argc, char **argv,
+		       enum ntn_msg_type type, void (*print_help)(const struct shell *sh))
 {
 	int err;
 	struct ntn_msg msg = {
-		.type = NTN_SHELL_SET_TLE,
+		.type = type,
 	};
 
-	if (argc != 4 || argv[1][0] == '\0' || argv[2][0] == '\0' || argv[3][0] == '\0') {
-		print_set_tle_help(sh);
+	if (argc != 4 || argv[1][0] == ' ' || argv[2][0] == ' ' || argv[3][0] == ' ') {
+		print_help(sh);
 		return 1;
 	}
 
@@ -337,8 +349,68 @@ static int cmd_set_tle_manual(const struct shell *sh, size_t argc, char **argv)
 		return 1;
 	}
 
-	shell_print(sh, "Provisioned manual TLE for: %s", msg.tle_name);
 	return 0;
+}
+
+static int cmd_set_tle_manual(const struct shell *sh, size_t argc, char **argv)
+{
+	if (publish_tle(sh, argc, argv, NTN_SHELL_SET_TLE, print_set_tle_help)) {
+		return 1;
+	}
+
+	shell_print(sh, "Provisioned manual TLE for: %s", argv[1]);
+	return 0;
+}
+
+static int cmd_use_tle_manual(const struct shell *sh, size_t argc, char **argv)
+{
+	if (publish_tle(sh, argc, argv, NTN_SHELL_USE_TLE, print_use_tle_help)) {
+		return 1;
+	}
+
+	shell_print(sh, "Replacing all satellites with: %s", argv[1]);
+	return 0;
+}
+
+static int publish_simple(const struct shell *sh, size_t argc, const char *usage,
+			  enum ntn_msg_type type)
+{
+	struct ntn_msg msg = {
+		.type = type,
+	};
+	int err;
+
+	if (argc != 1) {
+		shell_print(sh, "Usage: %s", usage);
+		return 1;
+	}
+
+	err = zbus_chan_pub(&NTN_CHAN, &msg, K_SECONDS(1));
+	if (err) {
+		shell_print(sh, "Failed to publish message, error: %d", err);
+		return 1;
+	}
+
+	return 0;
+}
+
+static int cmd_clear_tle_manual(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argv);
+
+	if (publish_simple(sh, argc, "att_ntn clear_tle", NTN_SHELL_CLEAR_TLE)) {
+		return 1;
+	}
+
+	shell_print(sh, "Erasing saved TLEs, back to the built-in TLE");
+	return 0;
+}
+
+static int cmd_list_tle_manual(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argv);
+
+	return publish_simple(sh, argc, "att_ntn list_tle", NTN_SHELL_LIST_TLE);
 }
 
 static int cmd_set_sib32_manual(const struct shell *sh, size_t argc, char **argv)
@@ -505,6 +577,11 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_att_ntn,
 #endif
 	SHELL_CMD(set_gnss_location, NULL, "Inject GNSS location without running GNSS", cmd_set_gnss_location_manual),
 	SHELL_CMD(set_tle, NULL, "Provision one TLE manually; repeat up to 4 satellites", cmd_set_tle_manual),
+	SHELL_CMD(use_tle, NULL, "Track only this satellite: replace all TLEs and SIB32, kept across resets",
+		  cmd_use_tle_manual),
+	SHELL_CMD(clear_tle, NULL, "Erase the TLEs saved from the shell, back to the built-in TLE",
+		  cmd_clear_tle_manual),
+	SHELL_CMD(list_tle, NULL, "Log the TLEs in use and the prediction source", cmd_list_tle_manual),
 	SHELL_CMD(set_sib32, NULL, "Provision raw SIB32 prediction data", cmd_set_sib32_manual),
 	SHELL_CMD(clear_sib32, NULL, "Clear cached SIB32 so prediction can fall back to TLE", cmd_clear_sib32_manual),
 	SHELL_CMD(set_peak_offset, NULL, "Override NTN peak-time offset in seconds", cmd_set_peak_offset_manual),

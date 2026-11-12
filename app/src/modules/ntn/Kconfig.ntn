@@ -250,6 +250,17 @@ config APP_NTN_TLE_LINE2
 
 endif # APP_NTN_TLE_FROM_KCONFIG
 
+config APP_NTN_TLE_PERSIST
+	bool "Keep TLEs set from the shell across resets"
+	depends on SETTINGS
+	default y
+	help
+	  Save the TLEs given with "att_ntn use_tle" or "att_ntn set_tle" in settings
+	  and load them at boot in place of the Kconfig TLE. This lets the tracked
+	  satellite be changed from the shell without flashing a new image.
+	  "att_ntn clear_tle" erases them and goes back to the Kconfig TLE. A TLE
+	  fetched from the nRF Cloud shadow still replaces them in RAM.
+
 config APP_NTN_LEO_TIME_OF_PASS
 	string "Time of pass of LEO satellite (UTC)"
 	default "2025-09-29-10:20:00"
