@@ -322,7 +322,7 @@ static int publish_tle(const struct shell *sh, size_t argc, char **argv,
 		.type = type,
 	};
 
-	if (argc != 4 || argv[1][0] == ' ' || argv[2][0] == ' ' || argv[3][0] == ' ') {
+	if (argc != 4 || argv[1][0] == '\0' || argv[2][0] == '\0' || argv[3][0] == '\0') {
 		print_help(sh);
 		return 1;
 	}
