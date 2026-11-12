@@ -457,6 +457,15 @@ config APP_NTN_LOG_FS_LEVEL
 	  3 info, 4 debug). The console keeps its own level. Info leaves out the
 	  per-second GNSS satellite list, which would fill the flash in minutes.
 
+config APP_NTN_PASS_TRACE_FULL
+	bool "Full modem trace during the NTN pass window"
+	depends on NRF_MODEM_LIB_TRACE
+	help
+	  Raise the modem trace level to full (LTE, IP, GNSS, L1 events) when an NTN pass
+	  starts and drop back to LTE and IP when it ends, so the stored trace shows
+	  what the modem did while looking for the satellite without filling the flash
+	  between passes. Size the trace partition for the full level.
+
 module = APP_NTN
 module-str = NTN
 source "subsys/logging/Kconfig.template.log_config"

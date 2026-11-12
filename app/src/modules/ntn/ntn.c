@@ -3058,6 +3058,13 @@ static void state_ntn_entry(void *obj)
 
 	k_sleep(K_SECONDS(1));
 
+#if defined(CONFIG_APP_NTN_PASS_TRACE_FULL)
+	err = nrf_modem_lib_trace_level_set(NRF_MODEM_LIB_TRACE_LEVEL_FULL);
+	if (err) {
+		LOG_ERR("Failed to set full modem trace level: %d", err);
+	}
+#endif
+
 #if defined(CONFIG_MEMFAULT_NCS_POST_MODEM_TRACE_ON_COREDUMP)
 	/* Enable modem trace collection */
 	err = nrf_modem_lib_trace_level_set(NRF_MODEM_LIB_TRACE_LEVEL_FULL);
@@ -3349,6 +3356,13 @@ static void state_ntn_exit(void *obj)
 	if (err) {
 		LOG_ERR("Failed to set ntn dormant mode");
 	}
+
+#if defined(CONFIG_APP_NTN_PASS_TRACE_FULL)
+	err = nrf_modem_lib_trace_level_set(NRF_MODEM_LIB_TRACE_LEVEL_LTE_AND_IP);
+	if (err) {
+		LOG_ERR("Failed to restore modem trace level: %d", err);
+	}
+#endif
 
 #if defined(CONFIG_MEMFAULT_NCS_POST_MODEM_TRACE_ON_COREDUMP)
 	/* Stop modem trace collection */
